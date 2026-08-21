@@ -1,0 +1,10 @@
+.env
+.env.local
+__pycache__/
+*.py[cod]
+*.sqlite3
+.DS_Store
+frontend/node_modules/
+frontend/.next/
+frontend/out/
+backend/staticfiles/
