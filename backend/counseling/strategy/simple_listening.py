@@ -45,31 +45,4 @@ class SimpleListeningStrategy(BaseDialogueStrategy):
         return current_phase if current_phase != "initial" else "active_listening"
 
     def _compose_reply(self, user_message: str, intent: str, phase: str) -> str:
-        snippet = user_message.strip()
-        if len(snippet) > 40:
-            snippet = snippet[:40] + "..."
-
-        if intent == "expression_of_fatigue":
-            return (
-                "お仕事で疲れが溜まっているのですね。無理なさらないでください。"
-                "どのようなことが特に負担になっていますか？"
-            )
-        if intent == "expression_of_anxiety":
-            return (
-                "不安を感じているのですね。その気持ちを言葉にしてくださってありがとうございます。"
-                "今いちばん気になっていることは何でしょうか？"
-            )
-        if intent == "expression_of_sadness":
-            return (
-                "とてもつらいお気持ちなのですね。一人で抱え込まず、ここで少しずつ話して大丈夫です。"
-                "どんな出来事が心に残っていますか？"
-            )
-        if phase == "exploring":
-            return (
-                f"「{snippet}」について、もう少し詳しく教えていただけますか。"
-                "そのとき、どんな気持ちになりましたか？"
-            )
-        return (
-            "お話を聞かせていただき、ありがとうございます。"
-            "今の気持ちや、最近気になっていることを、思いつくまま話してみてください。"
-        )
+        return "あ"
