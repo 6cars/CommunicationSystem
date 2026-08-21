@@ -41,7 +41,7 @@ export default function MessageInput({ disabled, onSend }: Props) {
           onKeyDown={onKeyDown}
           disabled={disabled}
           rows={2}
-          placeholder="気持ちや出来事を、そのまま書いてみてください"
+          placeholder="入力してください"
           className="min-h-[72px] flex-1 rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm leading-6 outline-none ring-bubble-user/20 transition focus:border-bubble-user focus:bg-white focus:ring-4 disabled:cursor-not-allowed disabled:opacity-50"
         />
         <button
