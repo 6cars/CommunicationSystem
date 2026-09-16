@@ -1,10 +1,16 @@
 class BaseDialogueStrategy:
     """対話戦略エンジンの基本クラス。アルゴリズム実装は具象クラスで差し替える。"""
 
-    INITIAL_MESSAGE = "こんにちは。今日はお話ししたいことがあれば何でも教えてくださいね。"
+    def get_initial_messages(self, session=None, user_name: str = "") -> list[str]:
+        display_name = user_name or "ゲスト"
+        return [
+            f"{display_name}さん，今日はよろしくお願いします．",
+            "あなたはどんな失敗をしたんですか？ここでお話しいただく内容はすべて安心して、あなたのペースで構いませんので、今心に引っかかっていることや、モヤモヤしていることを何でもお聞かせくださいね．",
+            "あなたは、失敗した時どのような行動をとってしまいましたか？",
+        ]
 
-    def get_initial_message(self) -> str:
-        return self.INITIAL_MESSAGE
+    def get_initial_message(self, session=None, user_name: str = "") -> str:
+        return "\n\n".join(self.get_initial_messages(session, user_name=user_name))
 
     def process_turn(self, session, user_message: str) -> dict:
         """

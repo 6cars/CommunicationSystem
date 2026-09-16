@@ -19,11 +19,13 @@ export type SessionStartResponse = {
   created_at: string;
   current_phase: string;
   initial_message: string;
+  initial_messages?: ChatMessage[];
 };
 
 export type SendMessageResponse = {
   user_message: ChatMessage;
   agent_message: ChatMessage;
+  agent_messages?: ChatMessage[];
   strategy_info: {
     phase?: string;
     intent?: string;

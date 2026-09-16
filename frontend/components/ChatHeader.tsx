@@ -32,7 +32,6 @@ export default function ChatHeader({
             </span>
           )}
         </div>
-        <h1 className="mt-1 text-lg font-semibold tracking-tight">カウンセリング対話エージェント</h1>
       </div>
       <div className="flex items-center gap-2">
         {isAdmin && onBackToAdmin && (

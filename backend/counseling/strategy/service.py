@@ -8,8 +8,13 @@ class DialogueStrategyService:
     def __init__(self, strategy: BaseDialogueStrategy | None = None):
         self.strategy = strategy or load_strategy()
 
-    def start_session(self, session) -> str:
-        return self.strategy.get_initial_message()
+    def start_session(self, session, user_name: str = "") -> list[str]:
+        if hasattr(self.strategy, "get_initial_messages"):
+            return self.strategy.get_initial_messages(session, user_name=user_name)
+        if hasattr(self.strategy, "get_initial_message"):
+            msg = self.strategy.get_initial_message(session, user_name=user_name)
+            return [msg] if isinstance(msg, str) else msg
+        return ["こんにちは。"]
 
     def handle_user_turn(self, session, user_message: str) -> dict:
         result = self.strategy.process_turn(session, user_message)

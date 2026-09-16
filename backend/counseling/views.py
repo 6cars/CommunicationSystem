@@ -111,22 +111,40 @@ class AuthLoginView(APIView):
 class SessionCreateView(APIView):
     def post(self, request):
         user_id = (request.data.get("user_id") or "guest").strip() or "guest"
-        session = CounselingSession.objects.create(user_id=user_id)
+        user_name = (request.data.get("name") or "").strip()
+
+        # ユーザー名がリクエストにない場合は Account テーブルから取得
+        if not user_name and user_id != "guest":
+            account = Account.objects.filter(user_id=user_id).first()
+            if account and account.name:
+                user_name = account.name
+        if not user_name:
+            user_name = user_id if user_id != "guest" else "ゲスト"
+
+        session = CounselingSession.objects.create(user_id=user_id, current_phase="failure_recall")
         strategy_service = DialogueStrategyService()
-        initial_text = strategy_service.start_session(session)
-        Message.objects.create(
-            session=session,
-            sender=Message.SENDER_AGENT,
-            content=initial_text,
-            strategy_log={"phase": session.current_phase, "event": "session_start"},
-        )
+        initial_texts = strategy_service.start_session(session, user_name=user_name)
+        if isinstance(initial_texts, str):
+            initial_texts = [initial_texts]
+
+        created_messages = []
+        for idx, text in enumerate(initial_texts):
+            msg = Message.objects.create(
+                session=session,
+                sender=Message.SENDER_AGENT,
+                content=text,
+                strategy_log={"phase": session.current_phase, "event": "session_start", "order": idx + 1},
+            )
+            created_messages.append(MessageSerializer(msg).data)
+
         return Response(
             {
                 "session_id": str(session.id),
                 "user_id": session.user_id,
                 "created_at": UtcDateTimeField().to_representation(session.created_at),
                 "current_phase": session.current_phase,
-                "initial_message": initial_text,
+                "initial_message": initial_texts[0] if initial_texts else "",
+                "initial_messages": created_messages,
             },
             status=status.HTTP_201_CREATED,
         )
@@ -159,17 +177,30 @@ class SessionMessageView(APIView):
         )
 
         result = DialogueStrategyService().handle_user_turn(session, content)
-        agent_message = Message.objects.create(
-            session=session,
-            sender=Message.SENDER_AGENT,
-            content=result["reply_text"],
-            strategy_log=result.get("strategy_metadata"),
-        )
+        reply_texts = result.get("reply_texts")
+        if not reply_texts:
+            reply_texts = [result["reply_text"]]
+
+        created_agent_messages = []
+        last_msg = None
+        for idx, text in enumerate(reply_texts):
+            agent_message = Message.objects.create(
+                session=session,
+                sender=Message.SENDER_AGENT,
+                content=text,
+                strategy_log={
+                    **(result.get("strategy_metadata") or {}),
+                    "sub_order": idx + 1,
+                },
+            )
+            last_msg = agent_message
+            created_agent_messages.append(MessageSerializer(agent_message).data)
 
         return Response(
             {
                 "user_message": MessageSerializer(user_message).data,
-                "agent_message": MessageSerializer(agent_message).data,
+                "agent_message": MessageSerializer(last_msg).data,
+                "agent_messages": created_agent_messages,
                 "strategy_info": result.get("strategy_metadata") or {},
             },
             status=status.HTTP_201_CREATED,

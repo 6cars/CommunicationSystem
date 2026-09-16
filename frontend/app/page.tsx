@@ -59,25 +59,35 @@ export default function HomePage() {
     }
   };
 
-  const startSession = useCallback(async (userId?: string) => {
+  const startSession = useCallback(async (userId?: string, name?: string) => {
     setWaiting(true);
     setError(null);
     setMessages([]);
     setSessionId(null);
     try {
-      const session = await createSession(userId || "guest");
+      const session = await createSession(userId || "guest", name);
       setSessionId(session.session_id);
-      setMessages([
-        {
-          id: "initial",
-          sender: "agent",
-          content: session.initial_message,
-          created_at: session.created_at,
-        },
-      ]);
+      const initialMsgs =
+        session.initial_messages && session.initial_messages.length > 0
+          ? session.initial_messages
+          : [
+              {
+                id: "initial",
+                sender: "agent" as const,
+                content: session.initial_message,
+                created_at: session.created_at,
+              },
+            ];
+
+      // 各メッセージを表示する前に「入力中」を約2秒（2000ms）見せる
+      for (let i = 0; i < initialMsgs.length; i++) {
+        setWaiting(true);
+        await new Promise((resolve) => setTimeout(resolve, 2000));
+        setMessages((prev) => [...prev, initialMsgs[i]]);
+      }
+      setWaiting(false);
     } catch (err) {
       setError(err instanceof Error ? err.message : "セッションを開始できませんでした");
-    } finally {
       setWaiting(false);
     }
   }, []);
@@ -86,7 +96,7 @@ export default function HomePage() {
   useEffect(() => {
     if (currentUser) {
       if (currentUser.role === "user" || adminView === "chat") {
-        void startSession(currentUser.user_id);
+        void startSession(currentUser.user_id, currentUser.name);
       }
     }
   }, [currentUser, adminView, startSession]);
@@ -97,14 +107,61 @@ export default function HomePage() {
     }
     setWaiting(true);
     setError(null);
+
+    // ユーザー側のメッセージを即座に表示
+    const tempUserId = `temp-user-${Date.now()}`;
+    setMessages((current) => [
+      ...current,
+      {
+        id: tempUserId,
+        sender: "user",
+        content,
+        created_at: new Date().toISOString(),
+      },
+    ]);
+
     try {
-      const result = await sendMessage(sessionId, content);
-      setMessages((current) => [...current, result.user_message, result.agent_message]);
+      // API送信と「入力中」の約2秒ウェイトを並行して待機
+      const [result] = await Promise.all([
+        sendMessage(sessionId, content),
+        new Promise((resolve) => setTimeout(resolve, 2000)),
+      ]);
+
+      const agentMsgs: ChatMessage[] =
+        result.agent_messages && result.agent_messages.length > 0
+          ? result.agent_messages
+          : [result.agent_message];
+
+      // 1通目を表示
+      setMessages((current) => {
+        const withoutTemp = current.filter((m) => m.id !== tempUserId);
+        return [...withoutTemp, result.user_message, agentMsgs[0]];
+      });
+
+      // 2通目以降がある場合は、2秒の入力中アニメーションを挟んで連続表示
+      for (let i = 1; i < agentMsgs.length; i++) {
+        setWaiting(true);
+        await new Promise((resolve) => setTimeout(resolve, 2000));
+        setMessages((current) => [...current, agentMsgs[i]]);
+      }
     } catch (err) {
       setError(err instanceof Error ? err.message : "送信に失敗しました");
+      setMessages((current) => current.filter((m) => m.id !== tempUserId));
     } finally {
       setWaiting(false);
     }
+  };
+
+  // 経験想起支援（「思い当たらない」ボタン押下時の処理）
+  const handleRecallSupport = async () => {
+    if (!sessionId || waiting) {
+      return;
+    }
+    console.log("[経験想起支援] 「思い当たらない」ボタンが押下されました。");
+
+    // TODO: 将来ここにプロンプト作成・生成AIによる具体例取得の処理を追加可能
+    // 現状は「思い当たらない」という入力を対話エンジンに送信し、対話フローを次に進めます
+    await onSend("思い当たらない");
   };
 
   if (!isInitialized) {
@@ -141,7 +198,7 @@ export default function HomePage() {
           userId={currentUser.user_id}
           name={currentUser.name}
           isAdmin={currentUser.role === "admin"}
-          onReset={() => void startSession(currentUser.user_id)}
+          onReset={() => void startSession(currentUser.user_id, currentUser.name)}
           onLogout={handleLogout}
           onBackToAdmin={() => setAdminView("dashboard")}
           disabled={waiting}
@@ -156,7 +213,11 @@ export default function HomePage() {
         ) : (
           <MessageList messages={messages} waiting={waiting && messages.length > 0} />
         )}
-        <MessageInput disabled={inputDisabled} onSend={(content) => void onSend(content)} />
+        <MessageInput
+          disabled={inputDisabled}
+          onSend={(content) => void onSend(content)}
+          onRecallSupport={() => void handleRecallSupport()}
+        />
       </section>
     </main>
   );

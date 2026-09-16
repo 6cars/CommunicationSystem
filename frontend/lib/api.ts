@@ -52,10 +52,10 @@ export function login(payload: { name: string; password: string }) {
   });
 }
 
-export function createSession(userId?: string) {
+export function createSession(userId?: string, name?: string) {
   return request<SessionStartResponse>("/api/sessions/", {
     method: "POST",
-    body: JSON.stringify({ user_id: userId || "guest" }),
+    body: JSON.stringify({ user_id: userId || "guest", name }),
   });
 }
 
@@ -86,4 +86,19 @@ export function fetchAdminUserSessions(userId: string) {
 
 export function fetchAdminSessionMessages(sessionId: string) {
   return request<AdminSessionDetail>(`/api/admin/sessions/${sessionId}/messages/`);
+}
+
+/**
+ * 経験想起支援API（プレースホルダー）
+ * 何も思いつかなかった時にプロンプトを作成して生成AIに投げて具体例を出力する機能用
+ */
+export function requestRecallSupport(sessionId: string, payload?: Record<string, unknown>) {
+  // TODO: 生成AI連携用のバックエンドエンドポイントを呼び出す際に有効化
+  return request<{ user_message?: ChatMessage; agent_message?: ChatMessage; examples?: string[] }>(
+    `/api/sessions/${sessionId}/recall-support/`,
+    {
+      method: "POST",
+      body: JSON.stringify(payload ?? {}),
+    }
+  );
 }
