@@ -49,6 +49,15 @@ class SimpleListeningStrategy(BaseDialogueStrategy):
         if not cleaned:
             return True
 
+        # 「思いつかない」「特にない」ボタンなどからのクイック回答を最優先で確実に判定
+        quick_negative_keywords = [
+            "思いつかない", "思いつきません", "特にない", "特になし", "特にありません",
+            "思い当たらない", "思い当たりません", "出ない", "出ません", "覚えていない", "覚えてない"
+        ]
+        for qk in quick_negative_keywords:
+            if qk in cleaned:
+                return True
+
         exact_negatives = {
             "ない", "ないです", "ありません", "特にない", "特になし", "特にありません", "ないかも",
             "思いつきません", "思いつきませんね", "思いつかないです", "思いつかない", "思いつきそうにない",
@@ -202,7 +211,7 @@ class SimpleListeningStrategy(BaseDialogueStrategy):
             next_step = self.STEP_FINISH_FAILURE
             next_phase = self.PHASE_FAILURE_RECALL
 
-        # ステップ 5: 事後思想についての回答を受信 -> 関連経験想起フェーズ（状態一致）へ移行
+        # ステップ 5: 事後思想についての回答を受信 -> 次の質問へ移行
         else:
             history["post_thought"] = user_message
             history["failure_post_thought"] = user_message
@@ -210,7 +219,6 @@ class SimpleListeningStrategy(BaseDialogueStrategy):
             failure_post_state = self._get_failure_post_state(history)
             reply_texts = [
                 "お話しいただきありがとうございます。失敗した経験について振り返ることができましたね。",
-                "それでは、次のステップである『関連経験想起フェーズ』に進みましょう。",
                 f"先ほどお話しいただいた「{failure_post_state}」になったとき，どのような行動をとりましたか？"
             ]
             next_step = self.STEP_REL_STATE_ASK_ACTION
@@ -474,7 +482,6 @@ class SimpleListeningStrategy(BaseDialogueStrategy):
 
             reply_texts = [
                 "新たな視点から失敗経験を見つめ直すことができましたね。",
-                "それでは、改めて関連経験想起フェーズに進みましょう。",
                 f"先ほどお話しいただいた「{failure_post_state}」になったとき，どのような行動をとりましたか？"
             ]
             next_step = self.STEP_REL_STATE_ASK_ACTION
