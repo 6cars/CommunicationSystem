@@ -53,8 +53,10 @@ def generate_example(element: str, variables: dict[str, str], previous_examples:
     try:
         if settings.LLM_PROVIDER == "mock":
             result.raw_output, result.model = _call_mock(element, len(previous_examples) + 1)
-        else:
+        elif settings.LLM_PROVIDER == "anthropic":
             result.raw_output, result.model = _call_anthropic(result.prompt)
+        else:
+            result.raw_output, result.model = _call_openai(result.prompt)
         result.output = normalize_output(result.raw_output)
         if not result.output:
             raise RecallSupportError("LLM の出力が空でした")
@@ -65,6 +67,30 @@ def generate_example(element: str, variables: dict[str, str], previous_examples:
 
 def _call_mock(element: str, attempt: int) -> tuple[str, str]:
     return f"例えば，「（{element} の具体例 {attempt}）」という経験はありませんか？", "mock"
+
+
+def _call_openai(prompt: str) -> tuple[str, str]:
+    import openai
+
+    try:
+        # OPENAI_API_KEY が未設定ならここで OpenAIError が送出される
+        client = openai.OpenAI(timeout=settings.LLM_TIMEOUT_SECONDS)
+        response = client.responses.create(
+            model=settings.LLM_MODEL,
+            input=prompt,
+            max_output_tokens=settings.LLM_MAX_TOKENS,
+        )
+    except openai.APIStatusError as exc:
+        raise RecallSupportError(f"OpenAI API エラー (HTTP {exc.status_code}): {exc.message}") from exc
+    except openai.APIConnectionError as exc:
+        raise RecallSupportError(f"OpenAI API に接続できませんでした: {exc}") from exc
+    except openai.OpenAIError as exc:
+        raise RecallSupportError(f"OpenAI API を呼び出せませんでした: {exc}") from exc
+
+    if response.status == "incomplete":
+        reason = response.incomplete_details.reason if response.incomplete_details else "unknown"
+        raise RecallSupportError(f"OpenAI API の応答が途中で終了しました (reason={reason})")
+    return response.output_text, response.model
 
 
 def _call_anthropic(prompt: str) -> tuple[str, str]:

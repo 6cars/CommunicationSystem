@@ -101,12 +101,15 @@ REST_FRAMEWORK = {
 PROMPTS_DIR = Path(os.getenv("PROMPTS_DIR", str(BASE_DIR / "prompts")))
 
 # 経験想起支援機能で使う LLM
+#   LLM_PROVIDER=openai    : OpenAI API (OPENAI_API_KEY が必要)
 #   LLM_PROVIDER=anthropic : Claude API (ANTHROPIC_API_KEY が必要)
 #   LLM_PROVIDER=mock      : API を呼ばずに固定の具体例を返す (動作確認・テスト用)
-LLM_PROVIDER = os.getenv("LLM_PROVIDER", "anthropic")
-LLM_MODEL = os.getenv("LLM_MODEL", "claude-opus-5")
-LLM_EFFORT = os.getenv("LLM_EFFORT", "low")
+LLM_PROVIDER = os.getenv("LLM_PROVIDER", "openai")
+_DEFAULT_MODELS = {"openai": "gpt-4o", "anthropic": "claude-opus-5", "mock": "mock"}
+LLM_MODEL = os.getenv("LLM_MODEL") or _DEFAULT_MODELS.get(LLM_PROVIDER, "")
 LLM_MAX_TOKENS = int(os.getenv("LLM_MAX_TOKENS", "4000"))
 LLM_TIMEOUT_SECONDS = float(os.getenv("LLM_TIMEOUT_SECONDS", "60"))
+# 以下は LLM_PROVIDER=anthropic のときだけ使う
+LLM_EFFORT = os.getenv("LLM_EFFORT", "low")
 # 安全性分類器で応答が拒否された場合にサーバ側で別モデルへ切り替える (Claude API のみ)
 LLM_USE_FALLBACKS = os.getenv("LLM_USE_FALLBACKS", "1") == "1"

@@ -4,7 +4,7 @@
 
 - フロントエンド: Next.js 14 / React / Tailwind CSS（`frontend/`）
 - バックエンド: Python / Django + Django REST framework（`backend/`）
-- LLM: Claude API（既定モデル `claude-opus-5`）。**経験想起支援機能（「思いつかない」を押したときの具体例生成）でのみ使用**し、質問文はテンプレートから作ります
+- LLM: OpenAI API（既定モデル `gpt-4o`。`LLM_PROVIDER=anthropic` で Claude API にも切り替え可）。**経験想起支援機能（「思いつかない」を押したときの具体例生成）でのみ使用**し、質問文はテンプレートから作ります
 - データ保存: PostgreSQL（ローカルでの確認用に SQLite も選べます）
 
 ## 構成
@@ -23,13 +23,13 @@
 
 ## セットアップと起動（Docker Compose）
 
-1. リポジトリ直下に `.env` を作り、Claude API キーを書きます（`.env` は Git 管理外です）。
+1. リポジトリ直下に `.env` を作り、OpenAI の API キーを書きます（`.env` は Git 管理外です）。
 
    ```
-   ANTHROPIC_API_KEY=sk-ant-...
+   OPENAI_API_KEY=sk-proj-...
    ```
 
-   シェルで `export ANTHROPIC_API_KEY=...` してから起動しても構いません。
+   シェルで `export OPENAI_API_KEY=...` してから起動しても構いません。
 
 2. 起動します。
 
@@ -49,13 +49,14 @@
 
 | 変数 | 既定値 | 説明 |
 |---|---|---|
-| `ANTHROPIC_API_KEY` | （なし） | Claude API キー。`.env` またはシェルの環境変数で渡す |
-| `LLM_PROVIDER` | `anthropic` | `anthropic`: Claude API を呼ぶ / `mock`: API を呼ばず固定の具体例を返す（動作確認用） |
-| `LLM_MODEL` | `claude-opus-5` | 具体例生成に使うモデル |
-| `LLM_EFFORT` | `low` | Claude の effort（`low`/`medium`/`high`/...）。1文の生成なので低めにしています。空にすると指定しません（effort 非対応のモデルを使う場合） |
+| `OPENAI_API_KEY` | （なし） | OpenAI API キー。`.env` またはシェルの環境変数で渡す |
+| `LLM_PROVIDER` | `openai` | `openai`: OpenAI API / `anthropic`: Claude API / `mock`: API を呼ばず固定の具体例を返す（動作確認用） |
+| `LLM_MODEL` | `gpt-4o` | 具体例生成に使うモデル（未指定時は `openai` なら `gpt-4o`、`anthropic` なら `claude-opus-5`） |
 | `LLM_MAX_TOKENS` | `4000` | 最大出力トークン数 |
 | `LLM_TIMEOUT_SECONDS` | `60` | API 呼び出しのタイムアウト（秒） |
-| `LLM_USE_FALLBACKS` | `1` | `1` のとき、安全性分類器で応答が拒否された場合にサーバ側で別モデルに切り替えて再実行する（Claude API のサーバ側フォールバック） |
+| `ANTHROPIC_API_KEY` | （なし） | `LLM_PROVIDER=anthropic` のときの Claude API キー |
+| `LLM_EFFORT` | `low` | `anthropic` のときのみ。Claude の effort。空にすると指定しません |
+| `LLM_USE_FALLBACKS` | `1` | `anthropic` のときのみ。応答が拒否された場合にサーバ側で別モデルに切り替えて再実行する |
 | `PROMPTS_DIR` | `backend/prompts` | テンプレートの置き場所 |
 | `DB_ENGINE` | `postgresql` | `sqlite` にすると `backend/db.sqlite3`（または `SQLITE_PATH`）を使う |
 | `POSTGRES_*` | `.env.dev` 参照 | PostgreSQL の接続情報 |
@@ -69,7 +70,7 @@
 # バックエンド
 cd backend
 pip install -r ../docker_files/backend/requirements.txt
-export DB_ENGINE=sqlite ANTHROPIC_API_KEY=sk-ant-...   # API を使わずに試すなら LLM_PROVIDER=mock
+export DB_ENGINE=sqlite OPENAI_API_KEY=sk-proj-...   # API を使わずに試すなら LLM_PROVIDER=mock
 python manage.py migrate
 python manage.py runserver 8000
 

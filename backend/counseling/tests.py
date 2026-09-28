@@ -267,6 +267,32 @@ class DialogueFlowTests(TestCase):
         log = RecallSupportLog.objects.get(session_id=self.session_id)
         self.assertEqual(log.error, "boom")
 
+    def test_openai_provider(self):
+        from types import SimpleNamespace
+        from unittest import mock
+
+        calls = []
+
+        def create(**kwargs):
+            calls.append(kwargs)
+            return SimpleNamespace(
+                status="completed",
+                incomplete_details=None,
+                output_text="例えば，「寝坊した」という経験はありませんか？\n",
+                model="gpt-4o-2024-08-06",
+            )
+
+        fake_client = SimpleNamespace(responses=SimpleNamespace(create=create))
+        with override_settings(LLM_PROVIDER="openai", LLM_MODEL="gpt-4o"), mock.patch(
+            "openai.OpenAI", return_value=fake_client
+        ):
+            self.send("dont_know")
+        self.assertEqual(self.agent_texts, ["例えば，「寝坊した」という経験はありませんか？"])
+        self.assertEqual(calls[0]["model"], "gpt-4o")
+        log = RecallSupportLog.objects.get(session_id=self.session_id)
+        self.assertEqual(log.prompt, calls[0]["input"])
+        self.assertEqual(log.model, "gpt-4o-2024-08-06")
+
     def test_all_templates_render_without_leftover_placeholders(self):
         import re
 

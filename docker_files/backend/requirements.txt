@@ -7,4 +7,5 @@ networkx
 injector
 python-ulid
 pydantic
+openai>=1.107,<2
 anthropic>=1.8,<2
