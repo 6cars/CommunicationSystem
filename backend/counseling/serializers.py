@@ -19,8 +19,12 @@ class MessageSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = Message
-        fields = ["id", "sender", "content", "created_at"]
+        fields = ["id", "sender", "content", "phase", "element", "response_type", "kind", "created_at"]
 
 
-class UserMessageCreateSerializer(serializers.Serializer):
-    content = serializers.CharField(allow_blank=False, trim_whitespace=True)
+class UserResponseSerializer(serializers.Serializer):
+    response_type = serializers.ChoiceField(
+        choices=[Message.RESPONSE_ANSWER, Message.RESPONSE_DONT_KNOW, Message.RESPONSE_NOTHING],
+        default=Message.RESPONSE_ANSWER,
+    )
+    content = serializers.CharField(allow_blank=True, trim_whitespace=True, required=False, default="")

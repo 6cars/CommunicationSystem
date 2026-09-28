@@ -1,0 +1,25 @@
+{
+  "_comment": "エージェントの発話テンプレート（仕様 4章）。{ } 内はユーザの回答で置き換えられる。使用できる変数は README の「テンプレート変数」を参照。",
+  "greeting": [
+    "{user_name}さん，今日はよろしくお願いします．",
+    "あなたはどんな失敗をしたんですか？ここでお話しいただく内容はすべて安心して、あなたのペースで構いませんので、今心に引っかかっていることや、モヤモヤしていることを何でもお聞かせくださいね．"
+  ],
+  "failure_action": "あなたは，失敗したときどのような行動をとってしまいましたか？",
+  "failure_pre_state": "「{failure_action}」という行動をとる直前，まわりはどのような状態でしたか？",
+  "failure_post_state": "「{failure_action}」という行動の後，どのような状態になりましたか？",
+  "failure_pre_thought": "「{failure_action}」という行動をとる前，どのようなことを考えていましたか？",
+  "failure_post_thought": "「{current_failure_post_state}」という結果になったことで，どのようなことを学びましたか？",
+  "related1_action": "先ほどお話しいただいた「{current_failure_post_state}」状態になったとき，どのような行動をとりましたか？",
+  "related1_post_state": "「{related_action}」という行動の後，どのような状態になりましたか？",
+  "related1_post_thought": "「{related_action}」ことで，どのようなことを学びましたか？",
+  "related2_pre_state_action": "「{failure_post_thought}」という考えに基づいて行動したことはありますか？そのときの状況と行動を教えてください．",
+  "related2_post_state": "「{related_action}」という行動の後，どのような状態になりましたか？",
+  "evaluation": "「{related_action}」という経験は，あなたにとって良い経験でしたか？",
+  "rerecall_pre_state": "「{failure_action}」という行動をとる前について，他に思い当たる状況はありますか？",
+  "rerecall_post_state": "「{failure_action}」という行動の後，他にどのような状態になりましたか？",
+  "origin_type1": "「{origin_failure_post_state}」状態が起点となって，「{related_post_state}」状態になったのですね．",
+  "origin_type2": "「{failure_post_thought}」という学びが起点となって，「{related_post_state}」状態になったのですね．",
+  "closing": "お話しいただきありがとうございました．",
+  "recall_support_error": "申し訳ありません．具体例を用意できませんでした．もう一度「思いつかない」を押すか，回答を入力してください．",
+  "session_completed": "対話は終了しています．新しく始める場合は「会話をリセット」を押してください．"
+}

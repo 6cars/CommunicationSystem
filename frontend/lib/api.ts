@@ -3,7 +3,7 @@ import type {
   AdminSessionSummary,
   AdminUserSummary,
   AuthUser,
-  ChatMessage,
+  ResponseType,
   SendMessageResponse,
   SessionStartResponse,
 } from "./types";
@@ -59,14 +59,11 @@ export function createSession(userId?: string, name?: string) {
   });
 }
 
-export function fetchMessages(sessionId: string) {
-  return request<ChatMessage[]>(`/api/sessions/${sessionId}/messages/`);
-}
-
-export function sendMessage(sessionId: string, content: string) {
+// ユーザの応答を送る（回答 / 思いつかない / 特にない）。評価の質問では content に「はい」「いいえ」を入れる
+export function sendResponse(sessionId: string, responseType: ResponseType, content = "") {
   return request<SendMessageResponse>(`/api/sessions/${sessionId}/messages/`, {
     method: "POST",
-    body: JSON.stringify({ content }),
+    body: JSON.stringify({ response_type: responseType, content }),
   });
 }
 
@@ -88,17 +85,15 @@ export function fetchAdminSessionMessages(sessionId: string) {
   return request<AdminSessionDetail>(`/api/admin/sessions/${sessionId}/messages/`);
 }
 
-/**
- * 経験想起支援API（プレースホルダー）
- * 何も思いつかなかった時にプロンプトを作成して生成AIに投げて具体例を出力する機能用
- */
-export function requestRecallSupport(sessionId: string, payload?: Record<string, unknown>) {
-  // TODO: 生成AI連携用のバックエンドエンドポイントを呼び出す際に有効化
-  return request<{ user_message?: ChatMessage; agent_message?: ChatMessage; examples?: string[] }>(
-    `/api/sessions/${sessionId}/recall-support/`,
-    {
-      method: "POST",
-      body: JSON.stringify(payload ?? {}),
-    }
-  );
+export type ExportFormat = "json" | "csv";
+export type ExportTable = "utterances" | "recall_support" | "experiences";
+
+// 評価実験用ログのダウンロード URL（sessionId を省略すると全セッション）
+export function adminExportUrl(format: ExportFormat, table: ExportTable = "utterances", sessionId?: string) {
+  const path = sessionId ? `/api/admin/sessions/${sessionId}/export/` : "/api/admin/export/";
+  const params = new URLSearchParams({ format });
+  if (format === "csv") {
+    params.set("table", table);
+  }
+  return `${API_BASE}${path}?${params.toString()}`;
 }

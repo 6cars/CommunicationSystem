@@ -6,11 +6,26 @@ export type AuthUser = {
   name: string;
 };
 
+export type ResponseType = "answer" | "dont_know" | "nothing";
+
 export type ChatMessage = {
   id: string;
   sender: Sender;
   content: string;
+  phase?: string;
+  element?: string;
+  response_type?: ResponseType | "";
+  kind?: string;
   created_at: string;
+};
+
+// 入力エリアの表示を決める情報（free: 自由入力 / yes_no: はい・いいえ / closed: 対話終了）
+export type InputState = {
+  mode: "free" | "yes_no" | "closed";
+  state: string;
+  state_label: string;
+  phase: string;
+  required: boolean;
 };
 
 export type SessionStartResponse = {
@@ -18,19 +33,14 @@ export type SessionStartResponse = {
   user_id: string;
   created_at: string;
   current_phase: string;
-  initial_message: string;
-  initial_messages?: ChatMessage[];
+  initial_messages: ChatMessage[];
+  input_state: InputState;
 };
 
 export type SendMessageResponse = {
   user_message: ChatMessage;
-  agent_message: ChatMessage;
-  agent_messages?: ChatMessage[];
-  strategy_info: {
-    phase?: string;
-    intent?: string;
-    engine?: string;
-  };
+  agent_messages: ChatMessage[];
+  input_state: InputState;
 };
 
 export type AdminUserSummary = {
@@ -58,8 +68,27 @@ export type AdminMessageDetail = {
   id: string;
   sender: Sender;
   content: string;
-  strategy_log?: Record<string, unknown> | null;
+  phase: string;
+  phase_label: string;
+  element: string;
+  element_label: string;
+  response_type: string;
+  response_type_label: string;
+  kind: string;
   created_at: string;
+};
+
+export type ExperienceRecord = {
+  id: number;
+  kind: "failure" | "related";
+  relation_type: 1 | 2 | null;
+  action: string;
+  pre_states: string[];
+  post_states: string[];
+  pre_thought: string;
+  post_thought: string;
+  pre_state_and_action: string;
+  evaluation: boolean | null;
 };
 
 export type AdminSessionDetail = {
@@ -69,5 +98,8 @@ export type AdminSessionDetail = {
   created_at: string;
   updated_at: string;
   current_phase: string;
+  completed: boolean;
   messages: AdminMessageDetail[];
+  failure_experience: ExperienceRecord | null;
+  related_experiences: ExperienceRecord[];
 };

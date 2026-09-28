@@ -9,7 +9,7 @@ module.exports = {
         muted: "#64748b",
         bubble: {
           user: "#2563eb",
-          agent: "#e8eef6",
+          agent: "#e5e7eb",
         },
       },
       boxShadow: {

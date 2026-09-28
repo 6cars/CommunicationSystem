@@ -1,17 +1,67 @@
 import { useEffect, useState } from "react";
 import {
+  adminExportUrl,
   deleteAdminUser,
   fetchAdminSessionMessages,
   fetchAdminUsers,
   fetchAdminUserSessions,
 } from "@/lib/api";
 import type {
-  AdminMessageDetail,
   AdminSessionDetail,
   AdminSessionSummary,
   AdminUserSummary,
   AuthUser,
+  ExperienceRecord,
 } from "@/lib/types";
+
+const EXPORT_LINKS = [
+  { label: "JSON", format: "json", table: "utterances" },
+  { label: "CSV: 発話", format: "csv", table: "utterances" },
+  { label: "CSV: 具体例生成", format: "csv", table: "recall_support" },
+  { label: "CSV: 経験DB", format: "csv", table: "experiences" },
+] as const;
+
+function ExperienceCard({ title, exp }: { title: string; exp: ExperienceRecord }) {
+  const rows: [string, string][] =
+    exp.relation_type === 2
+      ? [
+          ["事前思想", exp.pre_thought],
+          ["事前状態と行動", exp.pre_state_and_action],
+          ["事後状態", exp.post_states.join(" / ")],
+        ]
+      : [
+          ["行動", exp.action],
+          ["事前状態", exp.pre_states.join(" / ")],
+          ["事後状態", exp.post_states.join(" / ")],
+          ["事前思想", exp.pre_thought],
+          ["事後思想", exp.post_thought],
+        ];
+  const evaluation = exp.evaluation === null ? "未評価" : exp.evaluation ? "良い経験（はい）" : "いいえ";
+  return (
+    <div className="rounded-xl border border-slate-200 bg-white p-3 text-xs">
+      <div className="mb-1.5 flex items-center justify-between">
+        <span className="font-bold text-slate-700">{title}</span>
+        {exp.kind === "related" && (
+          <span
+            className={`rounded px-1.5 py-0.5 text-[10px] font-semibold ${
+              exp.evaluation ? "bg-emerald-100 text-emerald-800" : "bg-slate-100 text-slate-600"
+            }`}
+          >
+            {evaluation}
+          </span>
+        )}
+      </div>
+      <dl className="grid grid-cols-[6.5rem_1fr] gap-x-2 gap-y-1">
+        {rows.map(([label, value]) => (
+          <div key={label} className="contents">
+            <dt className="text-slate-400">{label}</dt>
+            <dd className="text-slate-700">{value || "未回答"}</dd>
+          </div>
+        ))}
+      </dl>
+    </div>
+  );
+}
 
 type Props = {
   adminUser: AuthUser;
@@ -140,22 +190,6 @@ export default function AdminDashboard({ adminUser, onLogout, onGoToChat }: Prop
 
   const selectedUser = users.find((u) => u.user_id === selectedUserId);
 
-  const exportCurrentLog = () => {
-    if (!activeSessionDetail) return;
-    const blob = new Blob([JSON.stringify(activeSessionDetail, null, 2)], {
-      type: "application/json",
-    });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = `dialogue_log_${activeSessionDetail.user_name || "user"}_${activeSessionDetail.session_id.slice(
-      0,
-      8
-    )}.json`;
-    a.click();
-    URL.revokeObjectURL(url);
-  };
-
   return (
     <div className="flex h-screen w-full flex-col bg-slate-100 text-slate-800">
       {/* 管理者ヘッダー */}
@@ -171,6 +205,12 @@ export default function AdminDashboard({ adminUser, onLogout, onGoToChat }: Prop
           <span className="text-xs text-slate-500">
             管理者: <span className="font-semibold text-slate-700">{adminUser.name || adminUser.user_id}</span>
           </span>
+          <a
+            href={adminExportUrl("json")}
+            className="rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-xs font-medium text-slate-700 transition hover:bg-slate-50"
+          >
+            全セッションのログ (JSON)
+          </a>
           <button
             type="button"
             onClick={onGoToChat}
@@ -378,16 +418,34 @@ export default function AdminDashboard({ adminUser, onLogout, onGoToChat }: Prop
                     Session ID: {activeSessionDetail.session_id}
                   </p>
                 </div>
-                <div className="flex items-center gap-2">
-                  <button
-                    type="button"
-                    onClick={exportCurrentLog}
-                    className="rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-50 transition"
-                  >
-                    JSON エクスポート
-                  </button>
+                <div className="flex flex-wrap items-center justify-end gap-2">
+                  {EXPORT_LINKS.map((link) => (
+                    <a
+                      key={link.label}
+                      href={adminExportUrl(link.format, link.table, activeSessionDetail.session_id)}
+                      className="rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-50 transition"
+                    >
+                      {link.label}
+                    </a>
+                  ))}
                 </div>
               </div>
+
+              {/* 経験DB: 最終的に得られた失敗経験・関連経験 */}
+              {activeSessionDetail.failure_experience && (
+                <div className="max-h-72 overflow-y-auto border-b border-slate-200 bg-slate-50 px-6 py-3">
+                  <div className="grid gap-2 md:grid-cols-2">
+                    <ExperienceCard title="失敗経験" exp={activeSessionDetail.failure_experience} />
+                    {activeSessionDetail.related_experiences.map((exp, idx) => (
+                      <ExperienceCard
+                        key={exp.id}
+                        title={`関連経験 ${idx + 1}（種類${exp.relation_type}）`}
+                        exp={exp}
+                      />
+                    ))}
+                  </div>
+                </div>
+              )}
 
               {/* メッセージログタイムライン */}
               <div className="flex-1 overflow-y-auto p-6 space-y-4 bg-slate-50/30">
@@ -436,10 +494,12 @@ export default function AdminDashboard({ adminUser, onLogout, onGoToChat }: Prop
                           {m.content}
                         </div>
 
-                        {/* エージェントの戦略メタデータログ表示（存在する場合） */}
-                        {!isUser && m.strategy_log && Object.keys(m.strategy_log).length > 0 && (
-                          <div className="mt-1 text-[10px] font-mono text-slate-400 px-1">
-                            strategy: {JSON.stringify(m.strategy_log)}
+                        {/* フェーズ・尋ねていた要素・応答種別 */}
+                        {m.phase && (
+                          <div className="mt-1 px-1 text-[10px] text-slate-400">
+                            {[m.phase_label, m.element_label, m.response_type_label || m.kind]
+                              .filter(Boolean)
+                              .join(" ・ ")}
                           </div>
                         )}
                       </div>

@@ -1,31 +1,65 @@
 "use client";
 
 import { KeyboardEvent, useState } from "react";
+import type { InputState } from "@/lib/types";
 
 type Props = {
   disabled: boolean;
-  onSend: (content: string) => void;
-  onRecallSupport?: () => void;
+  inputState: InputState | null;
+  onAnswer: (content: string) => void;
+  onDontKnow: () => void;
+  onNothing: () => void;
 };
 
-export default function MessageInput({ disabled, onSend, onRecallSupport }: Props) {
+export default function MessageInput({ disabled, inputState, onAnswer, onDontKnow, onNothing }: Props) {
   const [value, setValue] = useState("");
+  const mode = inputState?.mode ?? "free";
+  const required = inputState?.required ?? false;
 
   const submit = () => {
     const content = value.trim();
     if (!content || disabled) {
       return;
     }
-    onSend(content);
+    onAnswer(content);
     setValue("");
   };
 
   const onKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>) => {
-    if (event.key === "Enter" && !event.shiftKey) {
+    if (event.key === "Enter" && !event.shiftKey && !event.nativeEvent.isComposing) {
       event.preventDefault();
       submit();
     }
   };
+
+  if (mode === "closed") {
+    return (
+      <div className="border-t border-slate-200/80 bg-slate-50 px-5 py-5 text-center text-sm text-muted">
+        対話は終了しました。新しく始める場合は「会話をリセット」を押してください。
+      </div>
+    );
+  }
+
+  // 評価の質問: 「はい」「いいえ」で答える
+  if (mode === "yes_no") {
+    return (
+      <div className="border-t border-slate-200/80 bg-white px-5 py-5">
+        <div className="flex justify-center gap-4">
+          {["はい", "いいえ"].map((label) => (
+            <button
+              key={label}
+              type="button"
+              onClick={() => onAnswer(label)}
+              disabled={disabled}
+              className="h-12 w-36 rounded-full border border-bubble-user bg-white text-sm font-semibold text-bubble-user shadow-sm transition hover:bg-blue-50 active:scale-95 disabled:cursor-not-allowed disabled:border-slate-300 disabled:text-slate-400"
+            >
+              {label}
+            </button>
+          ))}
+        </div>
+      </div>
+    );
+  }
 
   return (
     <form
@@ -35,15 +69,14 @@ export default function MessageInput({ disabled, onSend, onRecallSupport }: Prop
         submit();
       }}
     >
-      {/* 補助アクションバー: 想起不能時のクイックボタン */}
+      {/* 補助アクションバー: 想起できないときのボタン */}
       <div className="mb-2.5 flex flex-wrap items-center gap-2">
-        <span className="text-xs font-medium text-slate-500">想起できない場合:</span>
         <button
           type="button"
-          onClick={() => onSend("思いつかない")}
+          onClick={onDontKnow}
           disabled={disabled}
           className="inline-flex items-center gap-1 rounded-full border border-amber-300 bg-amber-50 px-3 py-1 text-xs font-medium text-amber-800 transition hover:bg-amber-100 hover:border-amber-400 active:scale-95 disabled:cursor-not-allowed disabled:opacity-50 shadow-sm"
-          title="エピソードが思いつかない場合に選択すると、次のステップへ進みます"
+          title="回答の具体例を提示します"
         >
           <svg
             xmlns="http://www.w3.org/2000/svg"
@@ -60,13 +93,14 @@ export default function MessageInput({ disabled, onSend, onRecallSupport }: Prop
 
         <button
           type="button"
-          onClick={() => onSend("特にない")}
-          disabled={disabled}
-          className="inline-flex items-center gap-1 rounded-full border border-slate-300 bg-slate-50 px-3 py-1 text-xs font-medium text-slate-700 transition hover:bg-slate-100 hover:border-slate-400 active:scale-95 disabled:cursor-not-allowed disabled:opacity-50 shadow-sm"
-          title="特に思い当たる経験や状況がない場合に選択すると、次のステップへ進みます"
+          onClick={onNothing}
+          disabled={disabled || required}
+          className="inline-flex items-center gap-1 rounded-full border border-slate-300 bg-slate-50 px-3 py-1 text-xs font-medium text-slate-700 transition hover:bg-slate-100 hover:border-slate-400 active:scale-95 disabled:cursor-not-allowed disabled:border-slate-200 disabled:bg-slate-100 disabled:text-slate-400 disabled:line-through disabled:shadow-none disabled:active:scale-100 shadow-sm"
+          title={required ? "この質問は省略できません" : "この質問に答えずに次へ進みます"}
         >
           <span>特にない</span>
         </button>
+        {required ? <span className="text-[11px] text-slate-400">この質問は省略できません</span> : null}
 
         <p className="text-[11px] text-muted ml-auto hidden sm:block">Enter で送信 / Shift + Enter で改行</p>
       </div>

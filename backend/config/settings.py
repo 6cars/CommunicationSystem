@@ -51,16 +51,25 @@ TEMPLATES = [
 
 WSGI_APPLICATION = "config.wsgi.application"
 
-DATABASES = {
-    "default": {
-        "ENGINE": "django.db.backends.postgresql",
-        "NAME": os.getenv("POSTGRES_DB", "counseling"),
-        "USER": os.getenv("POSTGRES_USER", "counseling"),
-        "PASSWORD": os.getenv("POSTGRES_PASSWORD", "counseling"),
-        "HOST": os.getenv("POSTGRES_HOST", "db"),
-        "PORT": os.getenv("POSTGRES_PORT", "5432"),
+if os.getenv("DB_ENGINE", "postgresql") == "sqlite":
+    # ローカルでの動作確認・テスト用
+    DATABASES = {
+        "default": {
+            "ENGINE": "django.db.backends.sqlite3",
+            "NAME": os.getenv("SQLITE_PATH", str(BASE_DIR / "db.sqlite3")),
+        }
     }
-}
+else:
+    DATABASES = {
+        "default": {
+            "ENGINE": "django.db.backends.postgresql",
+            "NAME": os.getenv("POSTGRES_DB", "counseling"),
+            "USER": os.getenv("POSTGRES_USER", "counseling"),
+            "PASSWORD": os.getenv("POSTGRES_PASSWORD", "counseling"),
+            "HOST": os.getenv("POSTGRES_HOST", "db"),
+            "PORT": os.getenv("POSTGRES_PORT", "5432"),
+        }
+    }
 
 AUTH_PASSWORD_VALIDATORS = []
 
@@ -84,9 +93,20 @@ REST_FRAMEWORK = {
         "rest_framework.permissions.AllowAny",
     ],
     "DATETIME_FORMAT": "%Y-%m-%dT%H:%M:%SZ",
+    # ログ出力 API で ?format=json|csv を使うため、DRF の format パラメータ解釈を無効化
+    "URL_FORMAT_OVERRIDE": None,
 }
 
-DIALOGUE_STRATEGY_CLASS = os.getenv(
-    "DIALOGUE_STRATEGY_CLASS",
-    "counseling.strategy.simple_listening.SimpleListeningStrategy",
-)
+# 質問文テンプレート (questions.json) と経験想起支援のプロンプトテンプレート (recall_support/*.txt) の置き場所
+PROMPTS_DIR = Path(os.getenv("PROMPTS_DIR", str(BASE_DIR / "prompts")))
+
+# 経験想起支援機能で使う LLM
+#   LLM_PROVIDER=anthropic : Claude API (ANTHROPIC_API_KEY が必要)
+#   LLM_PROVIDER=mock      : API を呼ばずに固定の具体例を返す (動作確認・テスト用)
+LLM_PROVIDER = os.getenv("LLM_PROVIDER", "anthropic")
+LLM_MODEL = os.getenv("LLM_MODEL", "claude-opus-5")
+LLM_EFFORT = os.getenv("LLM_EFFORT", "low")
+LLM_MAX_TOKENS = int(os.getenv("LLM_MAX_TOKENS", "4000"))
+LLM_TIMEOUT_SECONDS = float(os.getenv("LLM_TIMEOUT_SECONDS", "60"))
+# 安全性分類器で応答が拒否された場合にサーバ側で別モデルへ切り替える (Claude API のみ)
+LLM_USE_FALLBACKS = os.getenv("LLM_USE_FALLBACKS", "1") == "1"

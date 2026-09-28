@@ -1,14 +1,17 @@
 import re
 
+import json
+
 from django.contrib.auth.hashers import check_password, make_password
-from django.db.models import Count, Max
+from django.http import HttpResponse
 from rest_framework import status
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
+from counseling import export
+from counseling.dialogue.controller import DialogueController, DialogueError
 from counseling.models import Account, CounselingSession, Message
-from counseling.serializers import MessageSerializer, UserMessageCreateSerializer, UtcDateTimeField
-from counseling.strategy.service import DialogueStrategyService
+from counseling.serializers import MessageSerializer, UserResponseSerializer, UtcDateTimeField
 
 
 def generate_next_user_id() -> str:
@@ -121,21 +124,9 @@ class SessionCreateView(APIView):
         if not user_name:
             user_name = user_id if user_id != "guest" else "ゲスト"
 
-        session = CounselingSession.objects.create(user_id=user_id, current_phase="failure_recall")
-        strategy_service = DialogueStrategyService()
-        initial_texts = strategy_service.start_session(session, user_name=user_name)
-        if isinstance(initial_texts, str):
-            initial_texts = [initial_texts]
-
-        created_messages = []
-        for idx, text in enumerate(initial_texts):
-            msg = Message.objects.create(
-                session=session,
-                sender=Message.SENDER_AGENT,
-                content=text,
-                strategy_log={"phase": session.current_phase, "event": "session_start", "order": idx + 1},
-            )
-            created_messages.append(MessageSerializer(msg).data)
+        session = CounselingSession.objects.create(user_id=user_id)
+        initial_messages = DialogueController.start(session, user_name=user_name)
+        controller = DialogueController(session)
 
         return Response(
             {
@@ -143,8 +134,8 @@ class SessionCreateView(APIView):
                 "user_id": session.user_id,
                 "created_at": UtcDateTimeField().to_representation(session.created_at),
                 "current_phase": session.current_phase,
-                "initial_message": initial_texts[0] if initial_texts else "",
-                "initial_messages": created_messages,
+                "initial_messages": MessageSerializer(initial_messages, many=True).data,
+                "input_state": controller.input_state(),
             },
             status=status.HTTP_201_CREATED,
         )
@@ -158,50 +149,39 @@ class SessionMessageView(APIView):
         session = self.get_session(session_id)
         if session is None:
             return Response({"detail": "session not found"}, status=status.HTTP_404_NOT_FOUND)
-        serializer = MessageSerializer(session.messages.all(), many=True)
-        return Response(serializer.data)
+        return Response(
+            {
+                "messages": MessageSerializer(session.messages.all(), many=True).data,
+                "input_state": DialogueController(session).input_state(),
+            }
+        )
 
     def post(self, request, session_id):
+        """ユーザの応答 (response_type: answer / dont_know / nothing) を受け取り、次の発話を返す。"""
         session = self.get_session(session_id)
         if session is None:
             return Response({"detail": "session not found"}, status=status.HTTP_404_NOT_FOUND)
 
-        serializer = UserMessageCreateSerializer(data=request.data)
+        serializer = UserResponseSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
-        content = serializer.validated_data["content"]
 
-        user_message = Message.objects.create(
-            session=session,
-            sender=Message.SENDER_USER,
-            content=content,
-        )
-
-        result = DialogueStrategyService().handle_user_turn(session, content)
-        reply_texts = result.get("reply_texts")
-        if not reply_texts:
-            reply_texts = [result["reply_text"]]
-
-        created_agent_messages = []
-        last_msg = None
-        for idx, text in enumerate(reply_texts):
-            agent_message = Message.objects.create(
-                session=session,
-                sender=Message.SENDER_AGENT,
-                content=text,
-                strategy_log={
-                    **(result.get("strategy_metadata") or {}),
-                    "sub_order": idx + 1,
-                },
+        controller = DialogueController(session)
+        try:
+            user_message, agent_messages = controller.handle(
+                serializer.validated_data["response_type"],
+                serializer.validated_data["content"],
             )
-            last_msg = agent_message
-            created_agent_messages.append(MessageSerializer(agent_message).data)
+        except DialogueError as exc:
+            return Response(
+                {"detail": str(exc), "input_state": controller.input_state()},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
 
         return Response(
             {
                 "user_message": MessageSerializer(user_message).data,
-                "agent_message": MessageSerializer(last_msg).data,
-                "agent_messages": created_agent_messages,
-                "strategy_info": result.get("strategy_metadata") or {},
+                "agent_messages": MessageSerializer(agent_messages, many=True).data,
+                "input_state": controller.input_state(),
             },
             status=status.HTTP_201_CREATED,
         )
@@ -268,29 +248,77 @@ class AdminUserSessionsView(APIView):
 
 
 class AdminSessionDetailView(APIView):
-    """管理者用: 特定セッションのメッセージ対話ログ詳細"""
+    """管理者用: 特定セッションの対話ログ詳細（全発話・経験DB・経験想起支援の呼び出し）"""
     def get(self, request, session_id):
         session = CounselingSession.objects.filter(id=session_id).first()
         if not session:
             return Response({"detail": "session not found"}, status=status.HTTP_404_NOT_FOUND)
-        account = Account.objects.filter(user_id=session.user_id).first()
-        user_name = account.name if account else session.user_id
-        messages = session.messages.all().order_by("created_at")
+        log = export.session_log(session)
         return Response({
-            "session_id": str(session.id),
-            "user_id": session.user_id,
-            "user_name": user_name,
+            **log,
             "created_at": UtcDateTimeField().to_representation(session.created_at),
             "updated_at": UtcDateTimeField().to_representation(session.updated_at),
-            "current_phase": session.current_phase,
             "messages": [
                 {
-                    "id": str(m.id),
-                    "sender": m.sender,
-                    "content": m.content,
-                    "strategy_log": m.strategy_log,
-                    "created_at": UtcDateTimeField().to_representation(m.created_at),
+                    "id": u["message_id"],
+                    "sender": u["speaker"],
+                    "content": u["text"],
+                    "phase": u["phase"],
+                    "phase_label": u["phase_label"],
+                    "element": u["element"],
+                    "element_label": u["element_label"],
+                    "response_type": u["response_type"],
+                    "response_type_label": u["response_type_label"],
+                    "kind": u["kind"],
+                    "created_at": u["timestamp"],
                 }
-                for m in messages
+                for u in log["utterances"]
             ],
         })
+
+
+def _export_response(sessions, fmt: str, table: str, basename: str):
+    if fmt == "csv":
+        if table not in export.CSV_TABLES:
+            return Response(
+                {"detail": f"table は {', '.join(export.CSV_TABLES)} のいずれかを指定してください"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        response = HttpResponse(export.sessions_csv(sessions, table), content_type="text/csv; charset=utf-8")
+        response["Content-Disposition"] = f'attachment; filename="{basename}_{table}.csv"'
+        return response
+    if fmt == "json":
+        body = json.dumps(export.sessions_log(sessions), ensure_ascii=False, indent=2)
+        response = HttpResponse(body, content_type="application/json; charset=utf-8")
+        response["Content-Disposition"] = f'attachment; filename="{basename}.json"'
+        return response
+    return Response({"detail": "format は json か csv を指定してください"}, status=status.HTTP_400_BAD_REQUEST)
+
+
+class AdminSessionExportView(APIView):
+    """管理者用: 1セッションのログ出力 (?format=json|csv&table=utterances|recall_support|experiences)"""
+    def get(self, request, session_id):
+        sessions = CounselingSession.objects.filter(id=session_id)
+        if not sessions.exists():
+            return Response({"detail": "session not found"}, status=status.HTTP_404_NOT_FOUND)
+        return _export_response(
+            sessions,
+            request.query_params.get("format", "json"),
+            request.query_params.get("table", "utterances"),
+            f"session_{str(session_id)[:8]}",
+        )
+
+
+class AdminExportView(APIView):
+    """管理者用: 全セッション（?user_id= で絞り込み可）のログ出力"""
+    def get(self, request):
+        sessions = CounselingSession.objects.order_by("created_at")
+        user_id = request.query_params.get("user_id")
+        if user_id:
+            sessions = sessions.filter(user_id=user_id)
+        return _export_response(
+            sessions,
+            request.query_params.get("format", "json"),
+            request.query_params.get("table", "utterances"),
+            f"sessions_{user_id}" if user_id else "sessions_all",
+        )

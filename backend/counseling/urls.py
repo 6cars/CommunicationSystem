@@ -1,7 +1,9 @@
 from django.urls import path
 
 from counseling.views import (
+    AdminExportView,
     AdminSessionDetailView,
+    AdminSessionExportView,
     AdminUserDeleteView,
     AdminUserListView,
     AdminUserSessionsView,
@@ -20,4 +22,6 @@ urlpatterns = [
     path("admin/users/<str:user_id>/", AdminUserDeleteView.as_view()),
     path("admin/users/<str:user_id>/sessions/", AdminUserSessionsView.as_view()),
     path("admin/sessions/<uuid:session_id>/messages/", AdminSessionDetailView.as_view()),
+    path("admin/sessions/<uuid:session_id>/export/", AdminSessionExportView.as_view()),
+    path("admin/export/", AdminExportView.as_view()),
 ]

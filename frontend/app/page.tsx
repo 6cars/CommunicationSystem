@@ -6,10 +6,21 @@ import ChatHeader from "@/components/ChatHeader";
 import LoginCard from "@/components/LoginCard";
 import MessageInput from "@/components/MessageInput";
 import MessageList from "@/components/MessageList";
-import { createSession, sendMessage } from "@/lib/api";
-import type { AuthUser, ChatMessage } from "@/lib/types";
+import { createSession, sendResponse } from "@/lib/api";
+import type { AuthUser, ChatMessage, InputState, ResponseType } from "@/lib/types";
 
 const AUTH_STORAGE_KEY = "counseling_auth_user";
+
+// エージェントの各発話を表示する前に「入力中」を見せる時間
+const TYPING_DELAY_MS = 2000;
+
+const RESPONSE_LABELS: Record<ResponseType, string> = {
+  answer: "",
+  dont_know: "思いつかない",
+  nothing: "特にない",
+};
+
+const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
 export default function HomePage() {
   const [currentUser, setCurrentUser] = useState<AuthUser | null>(null);
@@ -18,7 +29,9 @@ export default function HomePage() {
 
   const [sessionId, setSessionId] = useState<string | null>(null);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
+  const [inputState, setInputState] = useState<InputState | null>(null);
   const [waiting, setWaiting] = useState(false);
+  const [waitingLabel, setWaitingLabel] = useState("入力中...");
   const [error, setError] = useState<string | null>(null);
 
   // 初回マウント時に localStorage からログイン情報を復元
@@ -59,35 +72,32 @@ export default function HomePage() {
     }
   };
 
+  // エージェントの発話を「入力中」を挟みながら1通ずつ表示する
+  const showAgentMessages = async (agentMsgs: ChatMessage[], firstAlreadyWaited = false) => {
+    setWaitingLabel("入力中...");
+    for (let i = 0; i < agentMsgs.length; i++) {
+      if (i > 0 || !firstAlreadyWaited) {
+        setWaiting(true);
+        await sleep(TYPING_DELAY_MS);
+      }
+      setMessages((prev) => [...prev, agentMsgs[i]]);
+    }
+  };
+
   const startSession = useCallback(async (userId?: string, name?: string) => {
     setWaiting(true);
     setError(null);
     setMessages([]);
     setSessionId(null);
+    setInputState(null);
     try {
       const session = await createSession(userId || "guest", name);
       setSessionId(session.session_id);
-      const initialMsgs =
-        session.initial_messages && session.initial_messages.length > 0
-          ? session.initial_messages
-          : [
-              {
-                id: "initial",
-                sender: "agent" as const,
-                content: session.initial_message,
-                created_at: session.created_at,
-              },
-            ];
-
-      // 各メッセージを表示する前に「入力中」を約2秒（2000ms）見せる
-      for (let i = 0; i < initialMsgs.length; i++) {
-        setWaiting(true);
-        await new Promise((resolve) => setTimeout(resolve, 2000));
-        setMessages((prev) => [...prev, initialMsgs[i]]);
-      }
-      setWaiting(false);
+      await showAgentMessages(session.initial_messages);
+      setInputState(session.input_state);
     } catch (err) {
       setError(err instanceof Error ? err.message : "セッションを開始できませんでした");
+    } finally {
       setWaiting(false);
     }
   }, []);
@@ -101,11 +111,14 @@ export default function HomePage() {
     }
   }, [currentUser, adminView, startSession]);
 
-  const onSend = async (content: string) => {
+  // ユーザの応答（回答 / 思いつかない / 特にない）を送る
+  const respond = async (responseType: ResponseType, content = "") => {
     if (!sessionId || waiting) {
       return;
     }
     setWaiting(true);
+    // 「思いつかない」では経験想起支援機能が LLM で具体例を生成する
+    setWaitingLabel(responseType === "dont_know" ? "具体例を生成しています..." : "入力中...");
     setError(null);
 
     // ユーザー側のメッセージを即座に表示
@@ -115,53 +128,22 @@ export default function HomePage() {
       {
         id: tempUserId,
         sender: "user",
-        content,
+        content: content || RESPONSE_LABELS[responseType],
         created_at: new Date().toISOString(),
       },
     ]);
 
     try {
-      // API送信と「入力中」の約2秒ウェイトを並行して待機
-      const [result] = await Promise.all([
-        sendMessage(sessionId, content),
-        new Promise((resolve) => setTimeout(resolve, 2000)),
-      ]);
-
-      const agentMsgs: ChatMessage[] =
-        result.agent_messages && result.agent_messages.length > 0
-          ? result.agent_messages
-          : [result.agent_message];
-
-      // 1通目を表示
-      setMessages((current) => {
-        const withoutTemp = current.filter((m) => m.id !== tempUserId);
-        return [...withoutTemp, result.user_message, agentMsgs[0]];
-      });
-
-      // 2通目以降がある場合は、2秒の入力中アニメーションを挟んで連続表示
-      for (let i = 1; i < agentMsgs.length; i++) {
-        setWaiting(true);
-        await new Promise((resolve) => setTimeout(resolve, 2000));
-        setMessages((current) => [...current, agentMsgs[i]]);
-      }
+      const [result] = await Promise.all([sendResponse(sessionId, responseType, content), sleep(TYPING_DELAY_MS)]);
+      setMessages((current) => [...current.filter((m) => m.id !== tempUserId), result.user_message]);
+      await showAgentMessages(result.agent_messages, true);
+      setInputState(result.input_state);
     } catch (err) {
       setError(err instanceof Error ? err.message : "送信に失敗しました");
       setMessages((current) => current.filter((m) => m.id !== tempUserId));
     } finally {
       setWaiting(false);
     }
-  };
-
-  // 経験想起支援（「思い当たらない」ボタン押下時の処理）
-  const handleRecallSupport = async () => {
-    if (!sessionId || waiting) {
-      return;
-    }
-    console.log("[経験想起支援] 「思い当たらない」ボタンが押下されました。");
-
-    // TODO: 将来ここにプロンプト作成・生成AIによる具体例取得の処理を追加可能
-    // 現状は「思い当たらない」という入力を対話エンジンに送信し、対話フローを次に進めます
-    await onSend("思い当たらない");
   };
 
   if (!isInitialized) {
@@ -211,12 +193,18 @@ export default function HomePage() {
             セッションを準備しています...
           </div>
         ) : (
-          <MessageList messages={messages} waiting={waiting && messages.length > 0} />
+          <MessageList
+            messages={messages}
+            waiting={waiting && messages.length > 0}
+            waitingLabel={waitingLabel}
+          />
         )}
         <MessageInput
           disabled={inputDisabled}
-          onSend={(content) => void onSend(content)}
-          onRecallSupport={() => void handleRecallSupport()}
+          inputState={inputState}
+          onAnswer={(content) => void respond("answer", content)}
+          onDontKnow={() => void respond("dont_know")}
+          onNothing={() => void respond("nothing")}
         />
       </section>
     </main>
