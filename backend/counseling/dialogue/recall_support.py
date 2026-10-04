@@ -5,6 +5,7 @@
 LLM を使うのはこの機能だけで、質問文の生成には使わない。
 """
 
+import os
 from dataclasses import dataclass
 
 from django.conf import settings
@@ -72,8 +73,12 @@ def _call_mock(element: str, attempt: int) -> tuple[str, str]:
 def _call_openai(prompt: str) -> tuple[str, str]:
     import openai
 
+    # docker compose はキー未設定でも空文字を渡すため、空の場合もここで止める
+    if not os.environ.get("OPENAI_API_KEY", "").strip():
+        raise RecallSupportError(
+            "OPENAI_API_KEY が設定されていません（リポジトリ直下の .env に書いてコンテナを作り直してください）"
+        )
     try:
-        # OPENAI_API_KEY が未設定ならここで OpenAIError が送出される
         client = openai.OpenAI(timeout=settings.LLM_TIMEOUT_SECONDS)
         response = client.responses.create(
             model=settings.LLM_MODEL,

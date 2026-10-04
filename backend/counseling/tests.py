@@ -283,7 +283,9 @@ class DialogueFlowTests(TestCase):
             )
 
         fake_client = SimpleNamespace(responses=SimpleNamespace(create=create))
-        with override_settings(LLM_PROVIDER="openai", LLM_MODEL="gpt-4o"), mock.patch(
+        with override_settings(LLM_PROVIDER="openai", LLM_MODEL="gpt-4o"), mock.patch.dict(
+            "os.environ", {"OPENAI_API_KEY": "sk-test"}
+        ), mock.patch(
             "openai.OpenAI", return_value=fake_client
         ):
             self.send("dont_know")
