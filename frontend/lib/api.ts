@@ -3,6 +3,8 @@ import type {
   AdminSessionSummary,
   AdminUserSummary,
   AuthUser,
+  LogMode,
+  PrivateState,
   ResponseType,
   SendMessageResponse,
   SessionStartResponse,
@@ -52,18 +54,24 @@ export function login(payload: { name: string; password: string }) {
   });
 }
 
-export function createSession(userId?: string, name?: string) {
+export function createSession(userId: string | undefined, name: string | undefined, logMode: LogMode) {
   return request<SessionStartResponse>("/api/sessions/", {
     method: "POST",
-    body: JSON.stringify({ user_id: userId || "guest", name }),
+    body: JSON.stringify({ user_id: userId || "guest", name, log_mode: logMode }),
   });
 }
 
 // ユーザの応答を送る（回答 / 思いつかない / 特にない）。評価の質問では content に「はい」「いいえ」を入れる
-export function sendResponse(sessionId: string, responseType: ResponseType, content = "") {
+// ログを取らないモードでは、前回の応答で受け取った privateState をそのまま送り返す
+export function sendResponse(
+  sessionId: string,
+  responseType: ResponseType,
+  content = "",
+  privateState: PrivateState | null = null,
+) {
   return request<SendMessageResponse>(`/api/sessions/${sessionId}/messages/`, {
     method: "POST",
-    body: JSON.stringify({ response_type: responseType, content }),
+    body: JSON.stringify({ response_type: responseType, content, private_state: privateState }),
   });
 }
 

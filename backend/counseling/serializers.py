@@ -28,3 +28,5 @@ class UserResponseSerializer(serializers.Serializer):
         default=Message.RESPONSE_ANSWER,
     )
     content = serializers.CharField(allow_blank=True, trim_whitespace=True, required=False, default="")
+    # ログを取らないモードで、クライアントに預けている経験と具体例
+    private_state = serializers.JSONField(required=False, allow_null=True)

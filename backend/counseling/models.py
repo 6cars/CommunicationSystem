@@ -21,8 +21,18 @@ class Account(models.Model):
 class CounselingSession(models.Model):
     PHASE_INITIAL = "initial"
 
+    # full: すべての発話と回答をログに残す
+    # anonymous: エージェントの質問だけを残し、ユーザの回答と具体例は伏せ字（※）にする。経験DBにも保存しない
+    LOG_MODE_FULL = "full"
+    LOG_MODE_ANONYMOUS = "anonymous"
+    LOG_MODE_CHOICES = [
+        (LOG_MODE_FULL, "ログを取る"),
+        (LOG_MODE_ANONYMOUS, "ログを取らない（匿名）"),
+    ]
+
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     user_id = models.CharField(max_length=128, default="guest", db_index=True)
+    log_mode = models.CharField(max_length=16, choices=LOG_MODE_CHOICES, default=LOG_MODE_FULL)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
     current_phase = models.CharField(max_length=64, default=PHASE_INITIAL)

@@ -10,6 +10,12 @@ states.TRANSITIONS に従って次に尋ねる要素を決め、質問文テン�
         "related_id": 想起中の関連経験の Experience.id (未作成なら None),
         "examples": 現在の質問に対してこれまでに提示した具体例のリスト,
     }
+
+ログを取らないモード (CounselingSession.LOG_MODE_ANONYMOUS) では、ユーザの回答と具体例をサーバに保存しない。
+- 経験DB には書き込まず、経験と具体例は private_state としてクライアントに返す。
+  クライアントは次の応答と一緒に private_state を送り返し、サーバはそれを使って質問文を組み立てる。
+- 発話ログには、エージェントの質問文の回答部分を伏せ字 (※) にしたものだけを残す。
+  ユーザの自由記述の回答と具体例は ※ に置き換え、経験想起支援の呼び出しログ (プロンプト・出力) は残さない。
 """
 
 from counseling.dialogue import recall_support, templates
@@ -47,15 +53,21 @@ RESPONSE_DISPLAY = {
 
 STATES_STARTING_RELATED_EXPERIENCE = (RELATED1_ACTION, RELATED2_PRE_STATE_ACTION)
 
+# private_state でやり取りする経験の項目
+PRIVATE_TEXT_FIELDS = ("action", "pre_thought", "post_thought", "pre_state_and_action")
+PRIVATE_LIST_FIELDS = ("pre_states", "post_states")
+
 
 class DialogueError(Exception):
     """ユーザの応答が現在の状態で受け付けられない場合に送出する。"""
 
 
 class DialogueController:
-    def __init__(self, session: CounselingSession):
+    def __init__(self, session: CounselingSession, private_state: dict | None = None):
         self.session = session
         self.data = dict(session.state_data or {})
+        self.anonymous = session.log_mode == CounselingSession.LOG_MODE_ANONYMOUS
+        self.private = private_state if isinstance(private_state, dict) else {}
         self._failure = None
         self._related = None
 
@@ -64,20 +76,28 @@ class DialogueController:
     # ------------------------------------------------------------------
 
     @classmethod
-    def start(cls, session: CounselingSession, user_name: str) -> list[Message]:
-        """セッションを開始し、挨拶と最初の質問を返す。"""
-        failure = Experience.objects.create(session=session, kind=Experience.KIND_FAILURE)
+    def start(cls, session: CounselingSession, user_name: str) -> tuple["DialogueController", list[Message]]:
+        """セッションを開始し、(コントローラ, 挨拶と最初の質問) を返す。"""
         controller = cls(session)
-        controller.data = {"state": INITIAL_STATE, "failure_id": failure.id, "related_id": None, "examples": []}
+        if controller.anonymous:
+            controller._failure = Experience(session=session, kind=Experience.KIND_FAILURE)
+            failure_id = None
+        else:
+            failure_id = Experience.objects.create(session=session, kind=Experience.KIND_FAILURE).id
+        controller.data = {"state": INITIAL_STATE, "failure_id": failure_id, "related_id": None, "examples": []}
         controller.session.current_phase = STATES[INITIAL_STATE].phase
 
+        variables = {"user_name": user_name}
         messages = [
-            controller._say(line, kind="greeting")
-            for line in templates.question_lines("greeting", {"user_name": user_name})
+            controller._say(line, kind="greeting", masked=masked)
+            for line, masked in zip(
+                templates.question_lines("greeting", variables),
+                templates.question_lines("greeting", templates.mask(variables)),
+            )
         ]
         messages += controller._enter(INITIAL_STATE)
         controller._save()
-        return messages
+        return controller, messages
 
     @property
     def state(self) -> str:
@@ -98,6 +118,16 @@ class DialogueController:
             "state_label": state.label,
             "phase": state.phase,
             "required": state.required,
+        }
+
+    def private_state(self) -> dict | None:
+        """ログを取らないモードで、クライアントに預ける経験と具体例。ログを取るモードでは None。"""
+        if not self.anonymous:
+            return None
+        return {
+            "failure": _experience_to_private(self.failure),
+            "related": _experience_to_private(self.related) if self.related else None,
+            "examples": self._examples(),
         }
 
     def handle(self, response_type: str, content: str = "") -> tuple[Message, list[Message]]:
@@ -146,29 +176,33 @@ class DialogueController:
             next_state = RELATED2_PRE_STATE_ACTION if self.failure.post_thought else RERECALL_PRE_STATE
 
         self.data["state"] = next_state
-        self.data["examples"] = []
+        self._set_examples([])
         self.session.current_phase = STATES[next_state].phase
         if next_state in STATES_STARTING_RELATED_EXPERIENCE:
             # 新しい関連経験の想起を始める
             self.data["related_id"] = None
+            self.private["related"] = None
             self._related = None
 
         if next_state == COMPLETED:
             return self._present_origin()
-        return [self._say(templates.question_text(next_state, self._variables()), kind="question")]
+        return [self._say_template(next_state, kind="question")]
 
     def _recall_support(self) -> Message:
         """「思いつかない」: 経験想起支援機能で具体例を生成して提示し、同じ状態で応答を待つ。"""
-        examples = list(self.data.get("examples") or [])
+        examples = self._examples()
         result = recall_support.generate_example(self.state, self._variables(), examples)
 
         if result.output:
             message = self._say(result.output, kind="example")
             examples.append(result.output)
-            self.data["examples"] = examples
+            self._set_examples(examples)
         else:
-            message = self._say(templates.question_text("recall_support_error", {}), kind="notice")
+            message = self._say_template("recall_support_error", kind="notice")
 
+        if self.anonymous:
+            # プロンプトにも出力にもユーザの回答や具体例が含まれるので残さない
+            return message
         RecallSupportLog.objects.create(
             session=self.session,
             message=message,
@@ -208,22 +242,28 @@ class DialogueController:
             return
         elif state in (RELATED1_POST_STATE, RELATED2_POST_STATE):
             self.related.post_states = [*self.related.post_states, content]
-            self.related.save()
+            self._persist(self.related)
             return
         elif state == RELATED1_POST_THOUGHT:
             self.related.post_thought = content
-            self.related.save()
+            self._persist(self.related)
             return
-        failure.save()
+        self._persist(failure)
 
     def _create_related(self, relation_type: int, **fields) -> None:
-        self._related = Experience.objects.create(
+        self._related = Experience(
             session=self.session,
             kind=Experience.KIND_RELATED,
             relation_type=relation_type,
             **fields,
         )
+        self._persist(self._related)
         self.data["related_id"] = self._related.id
+
+    def _persist(self, experience: Experience) -> None:
+        """ログを取らないモードでは経験DBに書き込まない。"""
+        if not self.anonymous:
+            experience.save()
 
     # ------------------------------------------------------------------
     # 3.3 [評価] と起点の提示
@@ -231,16 +271,13 @@ class DialogueController:
 
     def _handle_evaluation(self, positive: bool) -> list[Message]:
         self.related.evaluation = positive
-        self.related.save()
+        self._persist(self.related)
         return self._enter(TRANSITIONS[EVALUATION]["yes" if positive else "no"])
 
     def _present_origin(self) -> list[Message]:
         key = "origin_type1" if self.related.relation_type == 1 else "origin_type2"
-        variables = self._variables()
-        origin = self._say(
-            templates.question_text(key, variables), kind="origin", phase=PHASE_RELATED_RECALL, element=key
-        )
-        closing = self._say(templates.question_text("closing", variables), kind="closing", element="closing")
+        origin = self._say_template(key, kind="origin", phase=PHASE_RELATED_RECALL, element=key)
+        closing = self._say_template("closing", kind="closing", element="closing")
         return [origin, closing]
 
     # ------------------------------------------------------------------
@@ -250,14 +287,46 @@ class DialogueController:
     @property
     def failure(self) -> Experience:
         if self._failure is None:
-            self._failure = Experience.objects.get(id=self.data["failure_id"])
+            if self.anonymous:
+                self._failure = self._experience_from_private("failure", Experience.KIND_FAILURE)
+            else:
+                self._failure = Experience.objects.get(id=self.data["failure_id"])
         return self._failure
 
     @property
     def related(self) -> Experience | None:
-        if self._related is None and self.data.get("related_id"):
-            self._related = Experience.objects.get(id=self.data["related_id"])
+        if self._related is None:
+            if self.anonymous:
+                if isinstance(self.private.get("related"), dict):
+                    self._related = self._experience_from_private("related", Experience.KIND_RELATED)
+            elif self.data.get("related_id"):
+                self._related = Experience.objects.get(id=self.data["related_id"])
         return self._related
+
+    def _experience_from_private(self, key: str, kind: str) -> Experience:
+        """クライアントから送り返された private_state の経験を、保存しない Experience にする。"""
+        raw = self.private.get(key)
+        raw = raw if isinstance(raw, dict) else {}
+        fields = {name: str(raw.get(name) or "") for name in PRIVATE_TEXT_FIELDS}
+        for name in PRIVATE_LIST_FIELDS:
+            values = raw.get(name)
+            fields[name] = [str(v) for v in values] if isinstance(values, list) else []
+        if kind == Experience.KIND_RELATED:
+            fields["relation_type"] = 2 if raw.get("relation_type") == 2 else 1
+            fields["evaluation"] = raw.get("evaluation") if isinstance(raw.get("evaluation"), bool) else None
+        return Experience(session=self.session, kind=kind, **fields)
+
+    def _examples(self) -> list[str]:
+        source = self.private if self.anonymous else self.data
+        examples = source.get("examples")
+        return [str(e) for e in examples] if isinstance(examples, list) else []
+
+    def _set_examples(self, examples: list[str]) -> None:
+        if self.anonymous:
+            self.private["examples"] = examples
+            self.data["examples"] = []
+        else:
+            self.data["examples"] = examples
 
     @property
     def current_failure_post_state(self) -> str:
@@ -303,30 +372,63 @@ class DialogueController:
             variables["related_pre_thought"] = failure.post_thought
         return variables
 
-    def _say(self, text: str, kind: str, phase: str | None = None, element: str | None = None) -> Message:
+    def _say_template(self, key: str, kind: str, **kwargs) -> Message:
+        """質問文テンプレートから発話する。ログを取らないモードでは、回答を埋め込んだ部分を伏せ字にしてログに残す。"""
+        variables = self._variables()
+        return self._say(
+            templates.question_text(key, variables),
+            kind=kind,
+            masked=templates.question_text(key, templates.mask(variables)),
+            **kwargs,
+        )
+
+    def _say(
+        self,
+        text: str,
+        kind: str,
+        phase: str | None = None,
+        element: str | None = None,
+        masked: str = templates.MASK,
+    ) -> Message:
+        """エージェントの発話を記録する。ログを取らないモードでは text の代わりに masked を保存する
+        (省略時は発話全体を伏せ字にする)。返す Message の content は常に text (クライアントに表示する文)。"""
         state = STATES[self.state]
-        return Message.objects.create(
+        message = Message.objects.create(
             session=self.session,
             sender=Message.SENDER_AGENT,
-            content=text,
+            content=masked if self.anonymous else text,
             phase=phase or state.phase,
             element=element if element is not None else state.key,
             kind=kind,
         )
+        message.content = text
+        return message
 
     def _record_user(self, response_type: str, content: str) -> Message:
         state = STATES[self.state]
-        return Message.objects.create(
+        # 自由記述の回答だけを伏せ字にする (「思いつかない」「特にない」「はい」「いいえ」は選択肢なので残す)
+        free_text = response_type == Message.RESPONSE_ANSWER and not state.yes_no
+        message = Message.objects.create(
             session=self.session,
             sender=Message.SENDER_USER,
-            content=content,
+            content=templates.MASK if self.anonymous and free_text else content,
             phase=state.phase,
             element=state.key,
             response_type=response_type,
         )
+        message.content = content
+        return message
 
     def _save(self) -> None:
         self.session.state_data = self.data
         if self.state == COMPLETED:
             self.session.current_phase = PHASE_COMPLETED
         self.session.save(update_fields=["state_data", "current_phase", "updated_at"])
+
+
+def _experience_to_private(experience: Experience) -> dict:
+    data = {name: getattr(experience, name) for name in (*PRIVATE_TEXT_FIELDS, *PRIVATE_LIST_FIELDS)}
+    if experience.kind == Experience.KIND_RELATED:
+        data["relation_type"] = experience.relation_type
+        data["evaluation"] = experience.evaluation
+    return data

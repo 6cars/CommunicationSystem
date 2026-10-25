@@ -9,8 +9,15 @@ import re
 from django.conf import settings
 
 UNANSWERED = "未回答"
+# ログを取らないモードで、ユーザの回答や具体例の代わりにログへ残す文字
+MASK = "※"
 
 _PLACEHOLDER = re.compile(r"\{([a-z0-9_]+)\}")
+
+
+def mask(variables: dict[str, str]) -> dict[str, str]:
+    """回答のある変数を伏せ字にする（未回答のものは空のまま残し、テンプレート側で「未回答」になる）。"""
+    return {name: MASK if value else value for name, value in variables.items()}
 
 
 def fill(template: str, variables: dict[str, str]) -> str:

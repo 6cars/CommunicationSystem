@@ -61,6 +61,7 @@ def session_log(session: CounselingSession, user_name: str | None = None) -> dic
         "created_at": _iso(session.created_at),
         "updated_at": _iso(session.updated_at),
         "current_phase": session.current_phase,
+        "log_mode": session.log_mode,
         "completed": session.current_phase == "completed",
         "utterances": [
             {
@@ -116,14 +117,14 @@ def sessions_csv(sessions, table: str) -> str:
 
     if table == "utterances":
         writer.writerow([
-            "session_id", "user_id", "user_name", "seq", "timestamp", "speaker", "text",
+            "session_id", "user_id", "user_name", "log_mode", "seq", "timestamp", "speaker", "text",
             "phase", "phase_label", "element", "element_label", "response_type", "response_type_label", "kind",
         ])
         for log in logs:
             for u in log["utterances"]:
                 writer.writerow([
-                    log["session_id"], log["user_id"], log["user_name"], u["seq"], u["timestamp"], u["speaker"],
-                    u["text"], u["phase"], u["phase_label"], u["element"], u["element_label"],
+                    log["session_id"], log["user_id"], log["user_name"], log["log_mode"], u["seq"], u["timestamp"],
+                    u["speaker"], u["text"], u["phase"], u["phase_label"], u["element"], u["element_label"],
                     u["response_type"], u["response_type_label"], u["kind"],
                 ])
     elif table == "recall_support":

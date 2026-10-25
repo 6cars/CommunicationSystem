@@ -124,18 +124,23 @@ class SessionCreateView(APIView):
         if not user_name:
             user_name = user_id if user_id != "guest" else "ゲスト"
 
-        session = CounselingSession.objects.create(user_id=user_id)
-        initial_messages = DialogueController.start(session, user_name=user_name)
-        controller = DialogueController(session)
+        log_mode = request.data.get("log_mode") or CounselingSession.LOG_MODE_FULL
+        if log_mode not in dict(CounselingSession.LOG_MODE_CHOICES):
+            return Response({"detail": f"不明なログモードです: {log_mode}"}, status=status.HTTP_400_BAD_REQUEST)
+
+        session = CounselingSession.objects.create(user_id=user_id, log_mode=log_mode)
+        controller, initial_messages = DialogueController.start(session, user_name=user_name)
 
         return Response(
             {
                 "session_id": str(session.id),
                 "user_id": session.user_id,
+                "log_mode": session.log_mode,
                 "created_at": UtcDateTimeField().to_representation(session.created_at),
                 "current_phase": session.current_phase,
                 "initial_messages": MessageSerializer(initial_messages, many=True).data,
                 "input_state": controller.input_state(),
+                "private_state": controller.private_state(),
             },
             status=status.HTTP_201_CREATED,
         )
@@ -165,7 +170,8 @@ class SessionMessageView(APIView):
         serializer = UserResponseSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
 
-        controller = DialogueController(session)
+        # ログを取らないモードでは、前回の応答で返した private_state (経験と具体例) が送り返される
+        controller = DialogueController(session, serializer.validated_data.get("private_state"))
         try:
             user_message, agent_messages = controller.handle(
                 serializer.validated_data["response_type"],
@@ -182,6 +188,7 @@ class SessionMessageView(APIView):
                 "user_message": MessageSerializer(user_message).data,
                 "agent_messages": MessageSerializer(agent_messages, many=True).data,
                 "input_state": controller.input_state(),
+                "private_state": controller.private_state(),
             },
             status=status.HTTP_201_CREATED,
         )
@@ -241,6 +248,7 @@ class AdminUserSessionsView(APIView):
                 "created_at": UtcDateTimeField().to_representation(s.created_at),
                 "updated_at": UtcDateTimeField().to_representation(s.updated_at),
                 "current_phase": s.current_phase,
+                "log_mode": s.log_mode,
                 "message_count": s.messages.count(),
                 "preview_text": first_user_msg.content if first_user_msg else "(メッセージなし)",
             })

@@ -3,11 +3,12 @@
 import { useCallback, useEffect, useState } from "react";
 import AdminDashboard from "@/components/AdminDashboard";
 import ChatHeader from "@/components/ChatHeader";
+import LogModeSelector from "@/components/LogModeSelector";
 import LoginCard from "@/components/LoginCard";
 import MessageInput from "@/components/MessageInput";
 import MessageList from "@/components/MessageList";
 import { createSession, sendResponse } from "@/lib/api";
-import type { AuthUser, ChatMessage, InputState, ResponseType } from "@/lib/types";
+import type { AuthUser, ChatMessage, InputState, LogMode, PrivateState, ResponseType } from "@/lib/types";
 
 const AUTH_STORAGE_KEY = "counseling_auth_user";
 
@@ -27,7 +28,11 @@ export default function HomePage() {
   const [adminView, setAdminView] = useState<"dashboard" | "chat">("dashboard");
   const [isInitialized, setIsInitialized] = useState(false);
 
+  // 会話を始める前にユーザが選ぶ（null の間はモード選択画面を表示）
+  const [logMode, setLogMode] = useState<LogMode | null>(null);
   const [sessionId, setSessionId] = useState<string | null>(null);
+  // ログを取らないモードで、サーバに保存しない回答と具体例（localStorage などには保存しない）
+  const [privateState, setPrivateState] = useState<PrivateState | null>(null);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [inputState, setInputState] = useState<InputState | null>(null);
   const [waiting, setWaiting] = useState(false);
@@ -61,10 +66,19 @@ export default function HomePage() {
     }
   };
 
+  // モード選択画面に戻る（次の会話でモードを選び直す）
+  const resetConversation = () => {
+    setLogMode(null);
+    setSessionId(null);
+    setPrivateState(null);
+    setMessages([]);
+    setInputState(null);
+    setError(null);
+  };
+
   const handleLogout = () => {
     setCurrentUser(null);
-    setSessionId(null);
-    setMessages([]);
+    resetConversation();
     try {
       localStorage.removeItem(AUTH_STORAGE_KEY);
     } catch {
@@ -84,15 +98,18 @@ export default function HomePage() {
     }
   };
 
-  const startSession = useCallback(async (userId?: string, name?: string) => {
+  const startSession = useCallback(async (mode: LogMode, userId?: string, name?: string) => {
+    setLogMode(mode);
     setWaiting(true);
     setError(null);
     setMessages([]);
     setSessionId(null);
+    setPrivateState(null);
     setInputState(null);
     try {
-      const session = await createSession(userId || "guest", name);
+      const session = await createSession(userId || "guest", name, mode);
       setSessionId(session.session_id);
+      setPrivateState(session.private_state);
       await showAgentMessages(session.initial_messages);
       setInputState(session.input_state);
     } catch (err) {
@@ -101,15 +118,6 @@ export default function HomePage() {
       setWaiting(false);
     }
   }, []);
-
-  // ユーザーがチャット画面に入ったときに自動でセッション開始
-  useEffect(() => {
-    if (currentUser) {
-      if (currentUser.role === "user" || adminView === "chat") {
-        void startSession(currentUser.user_id, currentUser.name);
-      }
-    }
-  }, [currentUser, adminView, startSession]);
 
   // ユーザの応答（回答 / 思いつかない / 特にない）を送る
   const respond = async (responseType: ResponseType, content = "") => {
@@ -134,7 +142,11 @@ export default function HomePage() {
     ]);
 
     try {
-      const [result] = await Promise.all([sendResponse(sessionId, responseType, content), sleep(TYPING_DELAY_MS)]);
+      const [result] = await Promise.all([
+        sendResponse(sessionId, responseType, content, privateState),
+        sleep(TYPING_DELAY_MS),
+      ]);
+      setPrivateState(result.private_state);
       setMessages((current) => [...current.filter((m) => m.id !== tempUserId), result.user_message]);
       await showAgentMessages(result.agent_messages, true);
       setInputState(result.input_state);
@@ -170,7 +182,25 @@ export default function HomePage() {
     );
   }
 
-  // 3. 一般ユーザー または 管理者のチャットテスト画面
+  const backToAdmin = () => {
+    resetConversation();
+    setAdminView("dashboard");
+  };
+
+  // 3. 会話を始める前: ログを取るかどうかを選ぶ
+  if (!logMode) {
+    return (
+      <main className="flex min-h-screen items-center justify-center p-4 bg-slate-100">
+        <LogModeSelector
+          onSelect={(mode) => void startSession(mode, currentUser.user_id, currentUser.name)}
+          onLogout={handleLogout}
+          onBackToAdmin={currentUser.role === "admin" ? backToAdmin : undefined}
+        />
+      </main>
+    );
+  }
+
+  // 4. 一般ユーザー または 管理者のチャットテスト画面
   const inputDisabled = waiting || !sessionId;
 
   return (
@@ -179,10 +209,11 @@ export default function HomePage() {
         <ChatHeader
           userId={currentUser.user_id}
           name={currentUser.name}
+          logMode={logMode}
           isAdmin={currentUser.role === "admin"}
-          onReset={() => void startSession(currentUser.user_id, currentUser.name)}
+          onReset={resetConversation}
           onLogout={handleLogout}
-          onBackToAdmin={() => setAdminView("dashboard")}
+          onBackToAdmin={backToAdmin}
           disabled={waiting}
         />
         {error ? (

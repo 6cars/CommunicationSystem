@@ -11,7 +11,7 @@ from django.test import TestCase, override_settings
 from rest_framework.test import APIClient
 
 from counseling.dialogue import recall_support
-from counseling.models import Experience, Message, RecallSupportLog
+from counseling.models import CounselingSession, Experience, Message, RecallSupportLog
 
 FAILURE = {
     "action": "当日ぎりぎりまで資料の準備をしてから家を出た",
@@ -344,3 +344,133 @@ class DialogueFlowTests(TestCase):
 
         self.assertEqual(self.client.get("/api/admin/export/?format=csv&table=x").status_code, 400)
         self.assertEqual(Message.objects.filter(session_id=self.session_id, sender="agent", kind="example").count(), 1)
+
+
+@override_settings(LLM_PROVIDER="mock")
+class AnonymousModeTests(TestCase):
+    """ログを取らないモード: 質問だけをログに残し、回答と具体例は伏せ字にする。"""
+
+    def setUp(self):
+        self.client = APIClient()
+        res = self.client.post(
+            "/api/sessions/", {"user_id": "guest", "name": "山田", "log_mode": "anonymous"}, format="json"
+        )
+        self.assertEqual(res.status_code, 201)
+        self.assertEqual(res.data["log_mode"], "anonymous")
+        self.session_id = res.data["session_id"]
+        self.last = res.data
+        self.private_state = res.data["private_state"]
+
+    def send(self, response_type="answer", content="", expect=201):
+        res = self.client.post(
+            f"/api/sessions/{self.session_id}/messages/",
+            {"response_type": response_type, "content": content, "private_state": self.private_state},
+            format="json",
+        )
+        self.assertEqual(res.status_code, expect, res.data)
+        self.last = res.data
+        if expect == 201:
+            self.private_state = res.data["private_state"]
+        return res.data
+
+    @property
+    def agent_texts(self):
+        return [m["content"] for m in self.last["agent_messages"]]
+
+    def logged(self, sender):
+        return list(
+            Message.objects.filter(session_id=self.session_id, sender=sender).values_list("content", flat=True)
+        )
+
+    def test_questions_are_masked_and_answers_are_not_stored(self):
+        self.assertEqual(self.last["initial_messages"][0]["content"], "山田さん，今日はよろしくお願いします．")
+
+        self.send("answer", FAILURE["action"])
+        # 画面にはふだんどおり回答を埋め込んだ質問が出る
+        self.assertEqual(
+            self.agent_texts,
+            ["「当日ぎりぎりまで資料の準備をしてから家を出た」という行動をとる直前，まわりはどのような状態でしたか？"],
+        )
+        self.assertEqual(self.last["user_message"]["content"], FAILURE["action"])
+        self.send("nothing")
+        self.send("answer", FAILURE["post_state"])
+        self.send("answer", FAILURE["pre_thought"])
+        self.send("answer", FAILURE["post_thought"])
+        self.send("dont_know")
+        example = self.agent_texts[0]
+        self.assertTrue(example.startswith("例えば，"))
+        self.send("dont_know")
+        # 2回目の具体例は1回目と異なる (private_state で具体例が引き継がれている)
+        self.assertNotEqual(self.agent_texts[0], example)
+        self.send("answer", "遅れた理由を冗談っぽく話した")
+        self.send("answer", "場が和んで打ち解けられた")
+        self.send("nothing")
+        self.assertEqual(self.agent_texts, ["「遅れた理由を冗談っぽく話した」という経験は，あなたにとって良い経験でしたか？"])
+        self.send("answer", "はい")
+        self.assertEqual(
+            self.agent_texts[0], "「集合時刻に遅刻した」状態が起点となって，「場が和んで打ち解けられた」状態になったのですね．"
+        )
+        self.assertEqual(self.last["input_state"]["mode"], "closed")
+
+        # ログには質問だけが残り、回答を埋め込んだ部分は ※ になる
+        agent_log = self.logged("agent")
+        self.assertEqual(agent_log[0], "※さん，今日はよろしくお願いします．")
+        self.assertIn("あなたは，失敗したときどのような行動をとってしまいましたか？", agent_log)
+        self.assertIn("「※」という行動をとる直前，まわりはどのような状態でしたか？", agent_log)
+        self.assertIn("「※」という結果になったことで，どのようなことを学びましたか？", agent_log)
+        self.assertIn("「※」状態が起点となって，「※」状態になったのですね．", agent_log)
+        examples = Message.objects.filter(session_id=self.session_id, kind="example")
+        self.assertEqual([m.content for m in examples], ["※", "※"])
+
+        # ユーザの自由記述は ※、選択肢の応答はそのまま
+        self.assertEqual(
+            self.logged("user"),
+            ["※", "特にない", "※", "※", "※", "思いつかない", "思いつかない", "※", "※", "特にない", "はい"],
+        )
+
+        # 経験DB・経験想起支援のログ・セッションの状態のどこにも回答や具体例が残らない
+        self.assertFalse(Experience.objects.filter(session_id=self.session_id).exists())
+        self.assertFalse(RecallSupportLog.objects.filter(session_id=self.session_id).exists())
+        stored = json.dumps(
+            [
+                list(Message.objects.filter(session_id=self.session_id).values_list("content", flat=True)),
+                CounselingSession.objects.get(id=self.session_id).state_data,
+            ],
+            ensure_ascii=False,
+        )
+        for secret in [*FAILURE.values(), "遅れた理由", "場が和んで", "山田", "例えば"]:
+            self.assertNotIn(secret, stored)
+
+        res = self.client.get(f"/api/admin/sessions/{self.session_id}/export/?format=json")
+        data = json.loads(res.content)[0]
+        self.assertEqual(data["log_mode"], "anonymous")
+        self.assertIsNone(data["failure_experience"])
+        self.assertNotIn(FAILURE["action"], res.content.decode("utf-8"))
+
+    def test_type2_and_rerecall_work_from_private_state(self):
+        self.send("answer", FAILURE["action"])
+        self.send("nothing")
+        self.send("answer", FAILURE["post_state"])
+        self.send("nothing")
+        self.send("nothing")  # 事後思想なし
+        self.send("nothing")  # 種類1 -> 事後思想がないので再想起へ
+        self.assertEqual(self.last["input_state"]["state"], "rerecall_pre_state")
+        self.send("nothing")
+        self.send("answer", "友人に迷惑をかけてしまった")
+        self.assertEqual(
+            self.agent_texts,
+            ["先ほどお話しいただいた「友人に迷惑をかけてしまった」状態になったとき，どのような行動をとりましたか？"],
+        )
+        self.assertEqual(
+            self.private_state["failure"]["post_states"], [FAILURE["post_state"], "友人に迷惑をかけてしまった"]
+        )
+        self.assertIn(
+            "先ほどお話しいただいた「※」状態になったとき，どのような行動をとりましたか？", self.logged("agent")
+        )
+
+    def test_full_mode_is_default(self):
+        res = self.client.post("/api/sessions/", {"user_id": "guest"}, format="json")
+        self.assertEqual(res.data["log_mode"], "full")
+        self.assertIsNone(res.data["private_state"])
+        res = self.client.post("/api/sessions/", {"user_id": "guest", "log_mode": "x"}, format="json")
+        self.assertEqual(res.status_code, 400)

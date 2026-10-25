@@ -8,6 +8,12 @@ export type AuthUser = {
 
 export type ResponseType = "answer" | "dont_know" | "nothing";
 
+// full: 回答も含めてすべて記録 / anonymous: 質問だけを記録し、回答と具体例は「※」にする
+export type LogMode = "full" | "anonymous";
+
+// ログを取らないモードで、サーバに保存しない経験と具体例。ブラウザのメモリ上だけで保持し、応答のたびに送り返す
+export type PrivateState = Record<string, unknown>;
+
 export type ChatMessage = {
   id: string;
   sender: Sender;
@@ -31,16 +37,19 @@ export type InputState = {
 export type SessionStartResponse = {
   session_id: string;
   user_id: string;
+  log_mode: LogMode;
   created_at: string;
   current_phase: string;
   initial_messages: ChatMessage[];
   input_state: InputState;
+  private_state: PrivateState | null;
 };
 
 export type SendMessageResponse = {
   user_message: ChatMessage;
   agent_messages: ChatMessage[];
   input_state: InputState;
+  private_state: PrivateState | null;
 };
 
 export type AdminUserSummary = {
@@ -60,6 +69,7 @@ export type AdminSessionSummary = {
   created_at: string;
   updated_at: string;
   current_phase: string;
+  log_mode: LogMode;
   message_count: number;
   preview_text: string;
 };
@@ -98,6 +108,7 @@ export type AdminSessionDetail = {
   created_at: string;
   updated_at: string;
   current_phase: string;
+  log_mode: LogMode;
   completed: boolean;
   messages: AdminMessageDetail[];
   failure_experience: ExperienceRecord | null;

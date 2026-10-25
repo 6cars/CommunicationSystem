@@ -1,8 +1,11 @@
 "use client";
 
+import type { LogMode } from "@/lib/types";
+
 type Props = {
   userId?: string;
   name?: string;
+  logMode?: LogMode | null;
   isAdmin?: boolean;
   onReset: () => void;
   onLogout: () => void;
@@ -13,6 +16,7 @@ type Props = {
 export default function ChatHeader({
   userId,
   name,
+  logMode,
   isAdmin,
   onReset,
   onLogout,
@@ -29,6 +33,11 @@ export default function ChatHeader({
           {name && (
             <span className="rounded bg-blue-50 px-2.5 py-0.5 text-[11px] font-semibold text-blue-700">
               ユーザー: {name}
+            </span>
+          )}
+          {logMode === "anonymous" && (
+            <span className="rounded bg-amber-50 px-2.5 py-0.5 text-[11px] font-semibold text-amber-700">
+              ログを取らないモード
             </span>
           )}
         </div>

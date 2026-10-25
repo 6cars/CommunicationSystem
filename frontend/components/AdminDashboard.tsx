@@ -393,7 +393,12 @@ export default function AdminDashboard({ adminUser, onLogout, onGoToChat }: Prop
                       <span className="text-[11px] font-semibold text-slate-600">
                         #{sessions.length - idx} • {dateStr}
                       </span>
-                      <span className="text-[10px] text-slate-400">{s.message_count} 通</span>
+                      <span className="flex items-center gap-1.5 text-[10px] text-slate-400">
+                        {s.log_mode === "anonymous" && (
+                          <span className="rounded bg-amber-50 px-1.5 py-0.5 font-semibold text-amber-700">匿名</span>
+                        )}
+                        {s.message_count} 通
+                      </span>
                     </div>
                     <p className="mt-1 text-xs text-slate-700 line-clamp-2">
                       {s.preview_text}
@@ -417,6 +422,11 @@ export default function AdminDashboard({ adminUser, onLogout, onGoToChat }: Prop
                   <p className="text-[11px] text-slate-400 font-mono">
                     Session ID: {activeSessionDetail.session_id}
                   </p>
+                  {activeSessionDetail.log_mode === "anonymous" && (
+                    <p className="mt-0.5 text-[11px] font-semibold text-amber-700">
+                      ログを取らないモード: 回答と具体例は「※」で記録されています
+                    </p>
+                  )}
                 </div>
                 <div className="flex flex-wrap items-center justify-end gap-2">
                   {EXPORT_LINKS.map((link) => (
