@@ -10,7 +10,8 @@ import json
 from django.test import TestCase, override_settings
 from rest_framework.test import APIClient
 
-from counseling.dialogue import recall_support
+from counseling.dialogue import recall_support, templates
+from counseling.dialogue.templates import MASK
 from counseling.models import CounselingSession, Experience, Message, RecallSupportLog
 
 FAILURE = {
@@ -20,6 +21,13 @@ FAILURE = {
     "pre_thought": "準備を万全にしてから出発すべきである",
     "post_thought": "準備は前日までに済ませておくべきである",
 }
+
+
+def q(key, **variables):
+    """質問文テンプレートに回答を埋め込んだ、エージェントが提示するはずの発話。"""
+    text = templates.question_text(key, variables)
+    assert "{" not in text, f"{key} の変数が足りません: {text}"
+    return text
 
 
 @override_settings(LLM_PROVIDER="mock")
@@ -55,29 +63,29 @@ class DialogueFlowTests(TestCase):
         return self.last["input_state"]["state"]
 
     def answer_failure_phase(self, post_thought=True):
-        self.assertEqual(self.agent_texts[-1], "あなたは，失敗したときどのような行動をとってしまいましたか？")
+        self.assertEqual(self.agent_texts[-1], q("failure_action"))
         self.answer(FAILURE["action"])
         self.assertEqual(
             self.agent_texts,
-            ["「当日ぎりぎりまで資料の準備をしてから家を出た」という行動をとる直前，まわりはどのような状態でしたか？"],
+            [q("failure_pre_state", failure_action=FAILURE["action"])],
         )
         self.answer(FAILURE["pre_state"])
         self.assertEqual(
-            self.agent_texts, ["「当日ぎりぎりまで資料の準備をしてから家を出た」という行動の後，どのような状態になりましたか？"]
+            self.agent_texts, [q("failure_post_state", failure_action=FAILURE["action"])]
         )
         self.answer(FAILURE["post_state"])
         self.assertEqual(
-            self.agent_texts, ["「当日ぎりぎりまで資料の準備をしてから家を出た」という行動をとる前，どのようなことを考えていましたか？"]
+            self.agent_texts, [q("failure_pre_thought", failure_action=FAILURE["action"], current_failure_post_state=FAILURE["post_state"])]
         )
         self.answer(FAILURE["pre_thought"])
-        self.assertEqual(self.agent_texts, ["「集合時刻に遅刻した」という結果になったことで，どのようなことを学びましたか？"])
+        self.assertEqual(self.agent_texts, [q("failure_post_thought", current_failure_post_state=FAILURE["post_state"])])
         if post_thought:
             self.answer(FAILURE["post_thought"])
         else:
             self.send("nothing")
         self.assertEqual(self.state, "related1_action")
         self.assertEqual(
-            self.agent_texts, ["先ほどお話しいただいた「集合時刻に遅刻した」状態になったとき，どのような行動をとりましたか？"]
+            self.agent_texts, [q("related1_action", current_failure_post_state=FAILURE["post_state"])]
         )
 
     # --- 8. 動作確認: 基本の対話 --------------------------------------------
@@ -94,16 +102,16 @@ class DialogueFlowTests(TestCase):
         self.assertEqual(self.state, "related1_action")
 
         self.answer("遅れた理由を冗談っぽく話した")
-        self.assertEqual(self.agent_texts, ["「遅れた理由を冗談っぽく話した」という行動の後，どのような状態になりましたか？"])
+        self.assertEqual(self.agent_texts, [q("related1_post_state", related_action="遅れた理由を冗談っぽく話した")])
         self.answer("場が和んで打ち解けられた")
-        self.assertEqual(self.agent_texts, ["「遅れた理由を冗談っぽく話した」ことで，どのようなことを学びましたか？"])
+        self.assertEqual(self.agent_texts, [q("related1_post_thought", related_action="遅れた理由を冗談っぽく話した", related_post_state="場が和んで打ち解けられた")])
         self.answer("ユーモアで場の空気を変えられる")
-        self.assertEqual(self.agent_texts, ["「遅れた理由を冗談っぽく話した」という経験は，あなたにとって良い経験でしたか？"])
+        self.assertEqual(self.agent_texts, [q("evaluation", related_action="遅れた理由を冗談っぽく話した")])
         self.assertEqual(self.last["input_state"]["mode"], "yes_no")
 
         self.answer("はい")
         self.assertEqual(
-            self.agent_texts[0], "「集合時刻に遅刻した」状態が起点となって，「場が和んで打ち解けられた」状態になったのですね．"
+            self.agent_texts[0], q("origin_type1", origin_failure_post_state=FAILURE["post_state"], related_post_state="場が和んで打ち解けられた")
         )
         self.assertEqual(self.last["input_state"]["mode"], "closed")
 
@@ -166,7 +174,7 @@ class DialogueFlowTests(TestCase):
         self.assertEqual(self.state, "related2_pre_state_action")
         self.assertEqual(
             self.agent_texts,
-            ["「準備は前日までに済ませておくべきである」という考えに基づいて行動したことはありますか？そのときの状況と行動を教えてください．"],
+            [q("related2_pre_state_action", failure_post_thought=FAILURE["post_thought"])],
         )
 
     def test_type1_post_state_nothing_goes_to_type2(self):
@@ -182,20 +190,20 @@ class DialogueFlowTests(TestCase):
         self.assertEqual(self.state, "rerecall_pre_state")
         self.assertEqual(self.last["input_state"]["phase"], "failure_rerecall")
         self.assertEqual(
-            self.agent_texts, ["「当日ぎりぎりまで資料の準備をしてから家を出た」という行動をとる前について，他に思い当たる状況はありますか？"]
+            self.agent_texts, [q("rerecall_pre_state", failure_action=FAILURE["action"])]
         )
         self.send("nothing")
         self.assertEqual(self.state, "rerecall_post_state")
         self.assertTrue(self.last["input_state"]["required"])
         self.assertEqual(
-            self.agent_texts, ["「当日ぎりぎりまで資料の準備をしてから家を出た」という行動の後，他にどのような状態になりましたか？"]
+            self.agent_texts, [q("rerecall_post_state", failure_action=FAILURE["action"], failure_post_state=FAILURE["post_state"])]
         )
         self.send("nothing", expect=400)
         self.answer("友人に迷惑をかけてしまった")
         self.assertEqual(self.state, "related1_action")
         self.assertEqual(
             self.agent_texts,
-            ["先ほどお話しいただいた「友人に迷惑をかけてしまった」状態になったとき，どのような行動をとりましたか？"],
+            [q("related1_action", current_failure_post_state="友人に迷惑をかけてしまった")],
         )
         failure = Experience.objects.get(session_id=self.session_id, kind="failure")
         self.assertEqual(failure.post_states, [FAILURE["post_state"], "友人に迷惑をかけてしまった"])
@@ -222,7 +230,7 @@ class DialogueFlowTests(TestCase):
         self.answer("いいえ")
         self.assertEqual(self.state, "related1_action")
         self.assertEqual(
-            self.agent_texts, ["先ほどお話しいただいた「集合時刻に遅刻した」状態になったとき，どのような行動をとりましたか？"]
+            self.agent_texts, [q("related1_action", current_failure_post_state=FAILURE["post_state"])]
         )
         self.answer("次の集合に早めに到着した")
         self.answer("信頼を取り戻せた")
@@ -231,20 +239,20 @@ class DialogueFlowTests(TestCase):
         related = list(Experience.objects.filter(session_id=self.session_id, kind="related"))
         self.assertEqual([r.evaluation for r in related], [False, True])
         self.assertEqual(
-            self.agent_texts[0], "「集合時刻に遅刻した」状態が起点となって，「信頼を取り戻せた」状態になったのですね．"
+            self.agent_texts[0], q("origin_type1", origin_failure_post_state=FAILURE["post_state"], related_post_state="信頼を取り戻せた")
         )
 
     def test_type2_positive_presents_thought_origin(self):
         self.answer_failure_phase()
         self.send("nothing")
         self.answer("旅行の前日に荷造りを済ませた")
-        self.assertEqual(self.agent_texts, ["「旅行の前日に荷造りを済ませた」という行動の後，どのような状態になりましたか？"])
+        self.assertEqual(self.agent_texts, [q("related2_post_state", related_action="旅行の前日に荷造りを済ませた")])
         self.answer("余裕をもって出発できた")
-        self.assertEqual(self.agent_texts, ["「旅行の前日に荷造りを済ませた」という経験は，あなたにとって良い経験でしたか？"])
+        self.assertEqual(self.agent_texts, [q("evaluation", related_action="旅行の前日に荷造りを済ませた")])
         self.answer("はい")
         self.assertEqual(
             self.agent_texts[0],
-            "「準備は前日までに済ませておくべきである」という学びが起点となって，「余裕をもって出発できた」状態になったのですね．",
+            q("origin_type2", failure_post_thought=FAILURE["post_thought"], related_post_state="余裕をもって出発できた"),
         )
         related = Experience.objects.get(session_id=self.session_id, kind="related")
         self.assertEqual(related.relation_type, 2)
@@ -389,7 +397,7 @@ class AnonymousModeTests(TestCase):
         # 画面にはふだんどおり回答を埋め込んだ質問が出る
         self.assertEqual(
             self.agent_texts,
-            ["「当日ぎりぎりまで資料の準備をしてから家を出た」という行動をとる直前，まわりはどのような状態でしたか？"],
+            [q("failure_pre_state", failure_action=FAILURE["action"])],
         )
         self.assertEqual(self.last["user_message"]["content"], FAILURE["action"])
         self.send("nothing")
@@ -405,20 +413,20 @@ class AnonymousModeTests(TestCase):
         self.send("answer", "遅れた理由を冗談っぽく話した")
         self.send("answer", "場が和んで打ち解けられた")
         self.send("nothing")
-        self.assertEqual(self.agent_texts, ["「遅れた理由を冗談っぽく話した」という経験は，あなたにとって良い経験でしたか？"])
+        self.assertEqual(self.agent_texts, [q("evaluation", related_action="遅れた理由を冗談っぽく話した")])
         self.send("answer", "はい")
         self.assertEqual(
-            self.agent_texts[0], "「集合時刻に遅刻した」状態が起点となって，「場が和んで打ち解けられた」状態になったのですね．"
+            self.agent_texts[0], q("origin_type1", origin_failure_post_state=FAILURE["post_state"], related_post_state="場が和んで打ち解けられた")
         )
         self.assertEqual(self.last["input_state"]["mode"], "closed")
 
         # ログには質問だけが残り、回答を埋め込んだ部分は ※ になる
         agent_log = self.logged("agent")
         self.assertEqual(agent_log[0], "※さん，今日はよろしくお願いします．")
-        self.assertIn("あなたは，失敗したときどのような行動をとってしまいましたか？", agent_log)
-        self.assertIn("「※」という行動をとる直前，まわりはどのような状態でしたか？", agent_log)
-        self.assertIn("「※」という結果になったことで，どのようなことを学びましたか？", agent_log)
-        self.assertIn("「※」状態が起点となって，「※」状態になったのですね．", agent_log)
+        self.assertIn(q("failure_action"), agent_log)
+        self.assertIn(q("failure_pre_state", failure_action=MASK), agent_log)
+        self.assertIn(q("failure_post_thought", current_failure_post_state=MASK), agent_log)
+        self.assertIn(q("origin_type1", origin_failure_post_state=MASK, related_post_state=MASK), agent_log)
         examples = Message.objects.filter(session_id=self.session_id, kind="example")
         self.assertEqual([m.content for m in examples], ["※", "※"])
 
@@ -459,13 +467,13 @@ class AnonymousModeTests(TestCase):
         self.send("answer", "友人に迷惑をかけてしまった")
         self.assertEqual(
             self.agent_texts,
-            ["先ほどお話しいただいた「友人に迷惑をかけてしまった」状態になったとき，どのような行動をとりましたか？"],
+            [q("related1_action", current_failure_post_state="友人に迷惑をかけてしまった")],
         )
         self.assertEqual(
             self.private_state["failure"]["post_states"], [FAILURE["post_state"], "友人に迷惑をかけてしまった"]
         )
         self.assertIn(
-            "先ほどお話しいただいた「※」状態になったとき，どのような行動をとりましたか？", self.logged("agent")
+            q("related1_action", current_failure_post_state=MASK), self.logged("agent")
         )
 
     def test_full_mode_is_default(self):
